@@ -6,22 +6,23 @@ from decimal import Decimal
 
 from flet import (
     AlertDialog,
+    Alignment,
+    Border,
     BorderRadius,
+    BorderSide,
     Column,
     Container,
     Icon,
     IconButton,
+    Icons,
     ListTile,
     ListView,
+    Padding,
     ResponsiveRow,
     Row,
     Text,
     TextStyle,
     Control,
-    alignment,
-    border,
-    icons,
-    padding,
 )
 
 from ..core import utils, views
@@ -78,9 +79,9 @@ class _MetricCard(Container):
     ):
         super().__init__(
             bgcolor=colors.bg_surface,
-            border=border.all(dimens.CARD_BORDER_WIDTH, colors.border),
+            border=Border.all(dimens.CARD_BORDER_WIDTH, colors.border),
             border_radius=dimens.RADIUS_LG,
-            padding=padding.symmetric(
+            padding=Padding.symmetric(
                 horizontal=dimens.SPACE_MD, vertical=dimens.SPACE_SM
             ),
             expand=True,
@@ -122,7 +123,7 @@ class _FilterChip(Container):
         super().__init__(
             bgcolor=colors.accent_muted if active else colors.bg_input,
             border_radius=dimens.RADIUS_PILL,
-            padding=padding.symmetric(
+            padding=Padding.symmetric(
                 horizontal=dimens.SPACE_SM, vertical=dimens.SPACE_XXS
             ),
             on_click=on_click,
@@ -640,13 +641,13 @@ class InvoicingListView(TView, Column):
         # ── Empty state ──────────────────────────────────────
         self.no_invoices_control = Container(
             visible=False,
-            padding=padding.symmetric(vertical=dimens.SPACE_XXL),
-            alignment=alignment.center,
+            padding=Padding.symmetric(vertical=dimens.SPACE_XXL),
+            alignment=Alignment.CENTER,
             content=Column(
                 horizontal_alignment=utils.CENTER_ALIGNMENT,
                 spacing=dimens.SPACE_SM,
                 controls=[
-                    Icon(icons.RECEIPT_LONG_OUTLINED, size=48, color=colors.text_muted),
+                    Icon(Icons.RECEIPT_LONG_OUTLINED, size=48, color=colors.text_muted),
                     views.TBodyText(
                         "No invoices yet",
                         size=fonts.HEADLINE_4_SIZE,
@@ -707,18 +708,16 @@ class InvoicingListView(TView, Column):
             ],
         )
 
-        return Column(
-            controls=[
-                self.title_control,
-                self.loading_indicator,
-                self.summary_row,
-                Container(height=dimens.SPACE_XS),
-                self.filter_row,
-                Container(height=dimens.SPACE_XS),
-                self.no_invoices_control,
-                Container(self.invoices_list_control, expand=True),
-            ],
-        )
+        self.controls = [
+            self.title_control,
+            self.loading_indicator,
+            self.summary_row,
+            Container(height=dimens.SPACE_XS),
+            self.filter_row,
+            Container(height=dimens.SPACE_XS),
+            self.no_invoices_control,
+            Container(self.invoices_list_control, expand=True),
+        ]
 
     def will_unmount(self):
         self.mounted = False
@@ -771,7 +770,7 @@ class InvoiceTile(Container):
                 Container(
                     bgcolor=colors.danger,
                     border_radius=dimens.RADIUS_SM,
-                    padding=padding.symmetric(horizontal=6, vertical=2),
+                    padding=Padding.symmetric(horizontal=6, vertical=2),
                     content=Text(
                         "OVERDUE",
                         size=fonts.CAPTION_SIZE,
@@ -786,19 +785,19 @@ class InvoiceTile(Container):
             on_click_delete=lambda e: on_delete_clicked(invoice),
             prefix_menu_items=[
                 views.TPopUpMenuItem(
-                    icon=icons.CANCEL_OUTLINED,
+                    icon=Icons.CANCEL_OUTLINED,
                     txt="Mark as cancelled"
                     if not invoice.cancelled
                     else "Mark as not cancelled",
                     on_click=lambda e: toggle_cancelled_status(invoice),
                 ),
                 views.TPopUpMenuItem(
-                    icon=icons.VISIBILITY_OUTLINED,
+                    icon=Icons.VISIBILITY_OUTLINED,
                     txt="View Invoice PDF",
                     on_click=lambda e: on_view_invoice(invoice),
                 ),
                 views.TPopUpMenuItem(
-                    icon=icons.VISIBILITY_OUTLINED,
+                    icon=Icons.VISIBILITY_OUTLINED,
                     txt="View Timesheet",
                     on_click=lambda e: on_view_timesheet(invoice),
                 ),
@@ -806,12 +805,12 @@ class InvoiceTile(Container):
         )
 
         # ── Inline quick-action icon buttons ─────────────────
-        paid_icon = icons.PAYMENTS_OUTLINED if not invoice.paid else icons.PAYMENTS
+        paid_icon = Icons.PAYMENTS_OUTLINED if not invoice.paid else Icons.PAYMENTS
         paid_tooltip = "Mark as paid" if not invoice.paid else "Mark as unpaid"
         paid_color = colors.success if invoice.paid else colors.text_muted
 
         sent_icon = (
-            icons.MARK_EMAIL_READ_OUTLINED if invoice.sent else icons.OUTGOING_MAIL
+            Icons.MARK_EMAIL_READ_OUTLINED if invoice.sent else Icons.OUTGOING_MAIL
         )
         sent_tooltip = "Mark as not sent" if invoice.sent else "Send invoice"
         sent_color = colors.accent if invoice.sent else colors.text_muted
@@ -885,9 +884,9 @@ class InvoiceTile(Container):
         # ── Assemble tile ────────────────────────────────────
         super().__init__(
             bgcolor=colors.bg_surface,
-            border=border.all(dimens.CARD_BORDER_WIDTH, colors.border),
+            border=Border.all(dimens.CARD_BORDER_WIDTH, colors.border),
             border_radius=dimens.RADIUS_LG,
-            padding=padding.all(0),
+            padding=Padding.all(0),
             on_hover=self._on_hover,
             content=Row(
                 spacing=0,
@@ -906,7 +905,7 @@ class InvoiceTile(Container):
                     # Main content
                     Container(
                         expand=True,
-                        padding=padding.only(
+                        padding=Padding.only(
                             left=dimens.SPACE_SM,
                             right=dimens.SPACE_MD,
                             top=dimens.SPACE_SM,

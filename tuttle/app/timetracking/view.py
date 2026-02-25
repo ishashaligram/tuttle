@@ -7,12 +7,10 @@ from flet import (
     AlertDialog,
     Column,
     Container,
-    FilePickerResultEvent,
-    FilePickerUploadEvent,
     ResponsiveRow,
     Text,
     Control,
-    border,
+    Border,
 )
 
 from ..core import tabular, utils, views
@@ -215,7 +213,7 @@ class TimeTrackingView(TView, Column):
         )
         self.set_progress_hint()
 
-    def on_file_picker_result(self, e: FilePickerResultEvent):
+    def on_file_picker_result(self, e):
         """Handle file picker result"""
         if e.files and len(e.files) > 0:
             file = e.files[0]
@@ -405,7 +403,7 @@ class TimeTrackingView(TView, Column):
         data_table = tabular.data_frame_to_data_table(
             data_frame=self.dataframe_to_display.sort_index().reset_index(),
             table_style={
-                "border": border.all(),
+                "border": Border.all(),
                 "border_radius": 10,
             },
         )
@@ -465,13 +463,11 @@ class TimeTrackingView(TView, Column):
             ]
         )
         self.timetracked_container = Container(expand=True)
-        return Column(
-            controls=[
-                self.title_control,
-                views.Spacer(md_space=True),
-                self.timetracked_container,
-            ]
-        )
+        self.controls = [
+            self.title_control,
+            views.Spacer(md_space=True),
+            self.timetracked_container,
+        ]
 
     def will_unmount(self):
         self.mounted = False

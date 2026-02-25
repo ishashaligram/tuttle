@@ -22,7 +22,7 @@ class ClientStorageImpl(ClientStorage):
         """
         try:
             threading.Thread(
-                target=self.__page.client_storage.set,
+                target=self.__page.shared_preferences.set,
                 args=(self.keys_prefix + key, value),
             ).start()
         except Exception as e:
@@ -34,7 +34,7 @@ class ClientStorageImpl(ClientStorage):
     def get_value(self, key: str) -> Optional[Any]:
         """appends an identifier prefix to the key and gets the value if exists"""
         try:
-            return self.__page.client_storage.get(self.keys_prefix + key)
+            return self.__page.shared_preferences.get(self.keys_prefix + key)
         except Exception as e:
             logger.error(
                 f"Error while getting client storage value {key}: {e.__class__.__name__}"
@@ -46,7 +46,8 @@ class ClientStorageImpl(ClientStorage):
         """appends an identifier prefix to the key and removes associated key-value pair if exists"""
         try:
             threading.Thread(
-                target=self.__page.client_storage.remove, args=(self.keys_prefix + key,)
+                target=self.__page.shared_preferences.remove,
+                args=(self.keys_prefix + key,),
             ).start()
         except Exception as e:
             logger.error(
@@ -57,7 +58,9 @@ class ClientStorageImpl(ClientStorage):
     def clear_preferences(self):
         """Deletes all of preferences permanently"""
         try:
-            threading.Thread(target=self.__page.client_storage.clear, args=()).start()
+            threading.Thread(
+                target=self.__page.shared_preferences.clear, args=()
+            ).start()
         except Exception as e:
             logger.error(f"Error while clearing client storage: {e.__class__.__name__}")
             logger.exception(e)

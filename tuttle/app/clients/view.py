@@ -398,173 +398,69 @@ class ClientEditorPopUp(DialogHandler, Column):
         return self.dialog
 
 
-class ClientsListView(TView, Column):
+class ClientsListView(views.CrudListView):
     """View for displaying a list of clients"""
 
+    entity_name = "client"
+    entity_name_plural = "clients"
+    on_add_intent_key = res_utils.ADD_CLIENT_INTENT
+
     def __init__(self, params: TViewParams):
-        super().__init__(params=params)
         self.intent = ClientsIntent()
-        self.loading_indicator = views.TProgressBar()
-        self.no_clients_control = views.TBodyText(
-            txt="You have not added any clients yet.",
-            color=colors.ERROR_COLOR,
-            show=False,
-        )
-        self.title_control = ResponsiveRow(
-            controls=[
-                Column(
-                    col={"xs": 12},
-                    controls=[
-                        views.THeading(title="My Clients", size=fonts.HEADLINE_4_SIZE),
-                        self.loading_indicator,
-                        self.no_clients_control,
-                    ],
-                )
-            ]
-        )
-        self.clients_container = views.THomeGrid()
-        self.clients_to_display = {}
+        super().__init__(params=params)
         self.contacts = {}
         self.editor = None
 
-    def parent_intent_listener(self, intent: str, data: any):
-        """Handles intents from the parent view"""
-        if intent == res_utils.ADD_CLIENT_INTENT:
-            # Open the client editor
-            if self.editor is not None:
-                self.editor.close_dialog()
-            self.editor = ClientEditorPopUp(
-                self.dialog_controller,
-                on_submit=self.on_save_client,
-                contacts_map=self.contacts,
-                on_error=lambda error: self.show_snack(
-                    error,
-                    is_error=True,
-                ),
-            )
-            self.editor.open_dialog()
-        elif intent == res_utils.RELOAD_INTENT:
-            # Reload all data for the view
-            self.reload_all_data()
+    def make_card(self, client):
+        return ClientCard(
+            client=client,
+            on_edit=self.on_edit_client_clicked,
+            on_delete=lambda c: self.on_delete_clicked(c),
+        )
 
-    def load_all_clients(self):
-        """Loads all clients from the store"""
-        self.clients_to_display = self.intent.get_all_as_map()
+    def get_entity_description(self, client):
+        return client.name
 
-    def load_all_contacts(self):
-        """Loads all contacts from the store"""
+    def load_extra_data(self):
         self.contacts = self.intent.get_all_contacts_as_map()
 
-    def refresh_clients(self):
-        """Refreshes the clients list"""
-        self.clients_container.controls.clear()
-        for key in self.clients_to_display:
-            client = self.clients_to_display[key]
-            clientCard = ClientCard(
-                client=client,
-                on_edit=self.on_edit_client_clicked,
-                on_delete=self.on_delete_client_clicked,
-            )
-            self.clients_container.controls.append(clientCard)
-
-    def on_edit_client_clicked(self, client: Client):
-        """Handles the edit button click event"""
-        if self.editor is not None:
+    def open_add_editor(self, data=None):
+        if self.editor:
             self.editor.close_dialog()
         self.editor = ClientEditorPopUp(
             self.dialog_controller,
-            on_submit=self.on_save_client,
+            on_submit=self._on_save_client,
+            contacts_map=self.contacts,
+            on_error=lambda error: self.show_snack(error, is_error=True),
+        )
+        self.editor.open_dialog()
+
+    def on_edit_client_clicked(self, client: Client):
+        if self.editor:
+            self.editor.close_dialog()
+        self.editor = ClientEditorPopUp(
+            self.dialog_controller,
+            on_submit=self._on_save_client,
             contacts_map=self.contacts,
             client=client,
-            on_error=lambda error: self.show_snack(
-                error,
-                is_error=True,
-            ),
+            on_error=lambda error: self.show_snack(error, is_error=True),
         )
         self.editor.open_dialog()
 
-    def on_delete_client_clicked(self, client: Client):
-        """Handles the delete button click event"""
-        if self.editor is not None:
-            self.editor.close_dialog()
-        # Open a confirmation dialog
-        self.editor = views.ConfirmDisplayPopUp(
-            dialog_controller=self.dialog_controller,
-            title="Are You Sure?",
-            description=f"Are you sure you wish to delete this client's info?\n{client.name}",
-            on_proceed=self.on_delete_confirmed,
-            proceed_button_label="Yes! Delete",
-            data_on_confirmed=client.id,
-        )
-        self.editor.open_dialog()
-
-    def on_delete_confirmed(self, client_id):
-        """called when the user confirms the deletion of a client"""
+    def _on_save_client(self, client_to_save: Client):
         self.loading_indicator.visible = True
         self.update_self()
-        result = self.intent.delete(client_id)
+        result = self.intent.save_client(client_to_save)
         is_error = not result.was_intent_successful
-        msg = result.error_msg if is_error else "Client deleted!"
+        if not is_error:
+            self.items_to_display[result.data.id] = result.data
+            self.refresh_list()
+        msg = result.error_msg if is_error else "Client saved!"
         self.show_snack(msg, is_error)
-        if not is_error and client_id in self.clients_to_display:
-            del self.clients_to_display[client_id]
-            self.refresh_clients()
         self.loading_indicator.visible = False
         self.update_self()
-
-    def on_save_client(self, client_to_save: Client):
-        """Handles the save event from the client editor"""
-        is_updating = client_to_save.id is not None
-        self.loading_indicator.visible = True
-        self.update_self()
-        result: IntentResult = self.intent.save_client(client_to_save)
-        if not result.was_intent_successful:
-            self.show_snack(result.error_msg, True)
-        else:
-            self.clients_to_display[result.data.id] = result.data
-            self.refresh_clients()
-            msg = (
-                "The client's info has been updated"
-                if is_updating
-                else "A new client has been added"
-            )
-            self.show_snack(msg, False)
-        self.loading_indicator.visible = False
-        self.update_self()
-
-    def did_mount(self):
-        """Called when the view is mounted"""
-        self.reload_all_data()
-
-    def reload_all_data(self):
-        """Reloads all data for the view when the view is mounted or a reload-intent is received"""
-        self.mounted = True
-        self.loading_indicator.visible = True
-        self.load_all_clients()
-        count = len(self.clients_to_display)
-        self.loading_indicator.visible = False
-        if count == 0:
-            self.no_clients_control.visible = True
-            self.clients_container.controls.clear()
-        else:
-            self.no_clients_control.visible = False
-            self.refresh_clients()
-        self.load_all_contacts()
-        self.update_self()
-
-    def build(self):
-        """Builds the view"""
-        view = Column(
-            controls=[
-                self.title_control,
-                views.Spacer(md_space=True),
-                Container(self.clients_container, expand=True),
-            ],
-        )
-        return view
 
     def will_unmount(self):
-        """Called when the view is unmounted"""
-        self.mounted = False
+        super().will_unmount()
         if self.editor:
             self.editor.dimiss_open_dialogs()

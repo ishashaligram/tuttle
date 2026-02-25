@@ -261,173 +261,78 @@ class ContactEditorPopUp(DialogHandler):
         self.on_submit_callback(self.contact)
 
 
-class ContactsListView(TView, Column):
+class ContactsListView(views.CrudListView):
     """The view for the contacts list page"""
 
+    entity_name = "contact"
+    entity_name_plural = "contacts"
+    on_add_intent_key = res_utils.ADD_CONTACT_INTENT
+
     def __init__(self, params: TViewParams):
-        super().__init__(params)
         self.intent = ContactsIntent()
-        self.loading_indicator = views.TProgressBar()
-        self.no_contacts_control = views.TBodyText(
-            txt="You have not added any contacts yet",
-            color=colors.ERROR_COLOR,
-            show=False,
-        )
-        self.title_control = ResponsiveRow(
-            controls=[
-                Column(
-                    col={"xs": 12},
-                    controls=[
-                        views.THeading(title="My Contacts", size=fonts.HEADLINE_4_SIZE),
-                        self.loading_indicator,
-                        self.no_contacts_control,
-                    ],
-                )
-            ]
-        )
-        self.contacts_container = views.THomeGrid()
-        self.contacts_to_display = {}
+        super().__init__(params)
         self.editor = None
 
-    def parent_intent_listener(self, intent: str, data: any):
-        """Called when the parent view passes an intent"""
-        if intent == res_utils.ADD_CONTACT_INTENT:
-            # Open the contact editor
-            if self.editor:
-                self.editor.close_dialog()
-            self.editor = ContactEditorPopUp(
-                dialog_controller=self.dialog_controller,
-                on_submit=self.on_new_contact_added,
-                on_error=lambda error: self.show_snack(error, is_error=True),
-            )
-            self.editor.open_dialog()
-        elif intent == res_utils.RELOAD_INTENT:
-            # Reload the contacts
-            self.reload_all_data()
+    def make_card(self, contact):
+        return ContactCard(
+            contact=contact,
+            on_edit_clicked=self.on_edit_contact_clicked,
+            on_deleted_clicked=lambda c: self.on_delete_clicked(c),
+        )
 
-    def on_new_contact_added(self, contact):
-        """Called when a new contact is added"""
-        self.loading_indicator.visible = True
-        self.update_self()
-        result: IntentResult = self.intent.save_contact(contact)
-        if not result.was_intent_successful:
-            self.show_snack(result.error_msg, True)
-        else:
-            contact = result.data
-            self.contacts_to_display[contact.id] = contact
-            self.refresh_list()
-            self.show_snack("A new contact has been added", False)
-        self.loading_indicator.visible = False
-        self.update_self()
+    def get_entity_description(self, contact):
+        return f"{contact.first_name} {contact.last_name}"
 
-    def load_all_contacts(self):
-
-        self.contacts_to_display = self.intent.get_all_as_map()
-
-    def refresh_list(self):
-        """Refreshes the displayed list of contacts"""
-        self.contacts_container.controls.clear()
-        for key in self.contacts_to_display:
-            contact = self.contacts_to_display[key]
-            contactCard = ContactCard(
-                contact=contact,
-                on_edit_clicked=self.on_edit_contact_clicked,
-                on_deleted_clicked=self.on_delete_contact_clicked,
-            )
-            self.contacts_container.controls.append(contactCard)
+    def open_add_editor(self, data=None):
+        if self.editor:
+            self.editor.close_dialog()
+        self.editor = ContactEditorPopUp(
+            dialog_controller=self.dialog_controller,
+            on_submit=self._on_save_contact,
+            on_error=lambda error: self.show_snack(error, is_error=True),
+        )
+        self.editor.open_dialog()
 
     def on_edit_contact_clicked(self, contact: Contact):
-        """Called when the edit button is clicked"""
         if self.editor:
             self.editor.close_dialog()
         self.editor = ContactEditorPopUp(
             dialog_controller=self.dialog_controller,
             contact=contact,
-            on_submit=self.on_update_contact,
+            on_submit=self._on_save_contact,
             on_error=lambda error: self.show_snack(error, is_error=True),
         )
-
         self.editor.open_dialog()
 
-    def on_delete_contact_clicked(self, contact: Contact):
-        """Called when the delete button is clicked"""
-        if self.editor:
-            self.editor.close_dialog()
-        # Open the confirmation dialog
-        self.editor = views.ConfirmDisplayPopUp(
-            dialog_controller=self.dialog_controller,
-            title="Are You Sure?",
-            description=f"Are you sure you wish to delete this contact?\n{contact.first_name} {contact.last_name}",
-            on_proceed=self.on_delete_confirmed,
-            proceed_button_label="Yes! Delete",
-            data_on_confirmed=contact.id,
-        )
-
-        self.editor.open_dialog()
-
-    def on_delete_confirmed(self, contact_id):
-        """Called when the user confirms the deletion of a contact"""
-        self.loading_indicator.visible = True
-        self.update_self()
-        result = self.intent.delete_contact(contact_id)
-        is_error = False if result.was_intent_successful else True
-        msg = "Contact deleted!" if not is_error else result.error_msg
-        self.show_snack(msg, is_error)
-        self.loading_indicator.visible = False
-        if not is_error and contact_id in self.contacts_to_display:
-            del self.contacts_to_display[contact_id]
-            self.refresh_list()
-        self.update_self()
-
-    def on_update_contact(self, contact):
-        """Called when a contact is updated"""
+    def _on_save_contact(self, contact):
         self.loading_indicator.visible = True
         self.update_self()
         result = self.intent.save_contact(contact)
-        is_error = False if result.was_intent_successful else True
-        msg = (
-            "The contact's info has been updated" if not is_error else result.error_msg
-        )
-
+        is_error = not result.was_intent_successful
+        if not is_error:
+            saved = result.data
+            self.items_to_display[saved.id] = saved
+            self.refresh_list()
+        msg = result.error_msg if is_error else "Contact saved!"
         self.show_snack(msg, is_error)
         self.loading_indicator.visible = False
-        if not is_error:
-            updated_contact: Contact = result.data
-            self.contacts_to_display[updated_contact.id] = updated_contact
-            self.refresh_list()
         self.update_self()
 
-    def did_mount(self):
-        """Called when the view is mounted"""
-        self.reload_all_data()
-
-    def reload_all_data(self):
-        """Reloads all the data when view is mounted or parent view passes a reload intent"""
-        self.mounted = True
+    def on_delete_confirmed(self, contact_id):
+        """Uses delete_contact for referential integrity check."""
         self.loading_indicator.visible = True
-        self.load_all_contacts()
-        count = len(self.contacts_to_display)
-        self.loading_indicator.visible = False
-        if count == 0:
-            self.no_contacts_control.visible = True
-            self.contacts_container.controls.clear()
-        else:
-            self.no_contacts_control.visible = False
-            self.refresh_list()
         self.update_self()
-
-    def build(self):
-        """Builds the view"""
-        return Column(
-            controls=[
-                self.title_control,
-                views.Spacer(md_space=True),
-                Container(self.contacts_container, expand=True),
-            ]
-        )
+        result = self.intent.delete_contact(contact_id)
+        is_error = not result.was_intent_successful
+        msg = "Contact deleted!" if not is_error else result.error_msg
+        self.show_snack(msg, is_error)
+        if not is_error and contact_id in self.items_to_display:
+            del self.items_to_display[contact_id]
+        self.refresh_list()
+        self.loading_indicator.visible = False
+        self.update_self()
 
     def will_unmount(self):
-        """Called when the view is unmounted"""
-        self.mounted = False
+        super().will_unmount()
         if self.editor:
             self.editor.dimiss_open_dialogs()

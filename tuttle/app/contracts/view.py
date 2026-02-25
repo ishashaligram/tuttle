@@ -132,69 +132,6 @@ class ContractCard(Card):
         )
 
 
-class ContractStates(Enum):
-    """Contract states for filtering"""
-
-    ALL = 1
-    ACTIVE = 2
-    COMPLETED = 3
-    UPCOMING = 4
-
-    def __str__(self):
-        return self.name.capitalize()
-
-    def tooltip(self):
-        """Returns the tooltip for the given state"""
-        if self is ContractStates.ACTIVE:
-            return "Not completed and not due"
-        elif self is ContractStates.UPCOMING:
-            return "Scheduled for the future"
-        elif self is ContractStates.COMPLETED:
-            return "Marked as completed"
-        else:
-            return "All Contracts"
-
-
-class ContractFiltersView(Row):
-    """Create and Handles contracts view filtering buttons"""
-
-    def __init__(self, onStateChanged: Callable[[ContractStates], None]):
-        super().__init__()
-        self.current_state = ContractStates.ALL
-        self.state_to_filter_btns_map = {}
-        self.on_state_changed_callback = onStateChanged
-
-    def on_filter_button_clicked(self, state: ContractStates):
-        """sets the new state and updates selected button"""
-        self.state_to_filter_btns_map[self.current_state].color = colors.GRAY_COLOR
-        self.current_state = state
-        self.state_to_filter_btns_map[self.current_state].color = colors.PRIMARY_COLOR
-        self.update()
-        self.on_state_changed_callback(state)
-
-    def set_filter_buttons(self):
-        """Sets all the filter buttons"""
-        for state in ContractStates:
-            self.state_to_filter_btns_map[state] = views.TStatusFilterBtn(
-                label=state.__str__(),
-                is_current_state=self.current_state.value == state.value,
-                on_click_params=state,
-                on_click=self.on_filter_button_clicked,
-                tooltip=state.tooltip(),
-            )
-
-    def build(self):
-        """Builds the filter buttons"""
-        if len(self.state_to_filter_btns_map) == 0:
-            # set the buttons
-            self.set_filter_buttons()
-
-        self.filters = ResponsiveRow(
-            controls=list(self.state_to_filter_btns_map.values())
-        )
-        return self.filters
-
-
 class ContractEditorScreen(TView, Container):
     """Used to edit or create a contract"""
 
@@ -608,300 +545,86 @@ class ContractEditorScreen(TView, Container):
             self.new_client_pop_up.dimiss_open_dialogs()
 
 
-class ContractsListView(TView, Column):
+class ContractsListView(views.CrudListView):
     """View for displaying a list of contracts."""
 
+    entity_name = "contract"
+    entity_name_plural = "contracts"
+
     def __init__(self, params: TViewParams):
-        super().__init__(params)
         self.intent = ContractsIntent()
-        self.loading_indicator = views.TProgressBar()
-        self.no_contracts_control = views.TBodyText(
-            txt="You have not added any contracts yet",
-            color=colors.ERROR_COLOR,
-            show=False,
+        super().__init__(params)
+
+    def make_card(self, contract):
+        return ContractCard(
+            contract=contract,
+            on_click_view=lambda cid: self.navigate_to_route(
+                res_utils.CONTRACT_DETAILS_SCREEN_ROUTE, cid
+            ),
+            on_click_edit=lambda cid: self.navigate_to_route(
+                res_utils.CONTRACT_EDITOR_SCREEN_ROUTE, cid
+            ),
+            on_click_delete=self._on_delete_by_id,
         )
-        self.title_control = ResponsiveRow(
-            controls=[
-                Column(
-                    col={"xs": 12},
-                    controls=[
-                        views.THeading(
-                            title="My Contracts", size=fonts.HEADLINE_4_SIZE
-                        ),
-                        self.loading_indicator,
-                        self.no_contracts_control,
-                    ],
-                )
-            ]
-        )
-        self.contracts_container = views.THomeGrid()
-        self.contracts_to_display = {}
-        self.pop_up_handler = None
 
-    def display_currently_filtered_contracts(self):
-        """Display the contracts that match the current filter."""
-        self.contracts_container.controls.clear()
-        for key in self.contracts_to_display:
-            contract = self.contracts_to_display[key]
-            contractCard = ContractCard(
-                contract=contract,
-                on_click_view=self.on_view_contract_clicked,
-                on_click_edit=self.on_edit_contract_clicked,
-                on_click_delete=self.on_delete_contract_clicked,
-            )
-            self.contracts_container.controls.append(contractCard)
+    def _on_delete_by_id(self, contract_id):
+        """Wrap delete_clicked to pass entity object from ID."""
+        if contract_id in self.items_to_display:
+            self.on_delete_clicked(self.items_to_display[contract_id])
 
-    def on_view_contract_clicked(self, contract_id: str):
-        """Called when the user clicks on the view button for a contract. Redirects to the contract details screen."""
-        self.navigate_to_route(res_utils.CONTRACT_DETAILS_SCREEN_ROUTE, contract_id)
+    def get_entity_description(self, contract):
+        return contract.title
 
-    def on_edit_contract_clicked(self, contract_id: str):
-        """Called when the user clicks on the edit button for a contract. Redirects to the contract editor screen."""
-        self.navigate_to_route(res_utils.CONTRACT_EDITOR_SCREEN_ROUTE, contract_id)
-
-    def on_delete_contract_clicked(self, contract_id: str):
-        """Called when the user clicks on the delete button for a contract. Displays a confirmation dialog."""
-        if contract_id not in self.contracts_to_display:
-            return  # should never happen
-        contract_title = self.contracts_to_display[contract_id].title
-        if self.pop_up_handler:
-            self.pop_up_handler.close_dialog()
-        # display a dialog to confirm delete action
-        self.pop_up_handler = views.ConfirmDisplayPopUp(
-            dialog_controller=self.dialog_controller,
-            title="Are You Sure?",
-            description=f"Are you sure you wish to delete this contract?\n{contract_title}",
-            on_proceed=self.on_delete_contract_confirmed,
-            proceed_button_label="Yes! Delete",
-            data_on_confirmed=contract_id,
-        )
-        self.pop_up_handler.open_dialog()
-
-    def on_delete_contract_confirmed(self, contract_id: str):
-        """Called when the user confirms the delete action. Deletes the contract and reloads the list of contracts."""
-        self.loading_indicator.visible = True
-        self.update_self()
-        result = self.intent.delete(contract_id)
-        is_error = not result.was_intent_successful
-        msg = "Contract deleted!" if not is_error else result.error_msg
-        self.show_snack(msg, is_error)
-        if not is_error:
-            if int(contract_id) in self.contracts_to_display:
-                # remove deleted contract from displayed contracts
-                del self.contracts_to_display[int(contract_id)]
-            # reload displayed contracts
-            self.display_currently_filtered_contracts()
-        self.loading_indicator.visible = False
-        self.update_self()
-
-    def on_filter_contracts(self, filterByState: ContractStates):
-        """Called when the user changes the filter for the contracts. Reloads the list of contracts."""
-        if filterByState.value == ContractStates.ACTIVE.value:
-            self.contracts_to_display = self.intent.get_active_as_map()
-        elif filterByState.value == ContractStates.UPCOMING.value:
-            self.contracts_to_display = self.intent.get_upcoming_as_map()
-        elif filterByState.value == ContractStates.COMPLETED.value:
-            self.contracts_to_display = self.intent.get_completed_as_map()
-        else:
-            self.contracts_to_display = self.intent.get_all_as_map()
-        self.display_currently_filtered_contracts()
-        self.update_self()
-
-    def did_mount(self):
-        """Called when the screen is mounted. Initializes the data."""
-        self.reload_all_data()
-
-    def parent_intent_listener(self, intent: str, data: any):
-        """Called when the parent screen sends an intent."""
-        if intent == res_utils.RELOAD_INTENT:
-            # reload data
-            self.reload_all_data()
-
-    def reload_all_data(self):
-        """Reloads the data for the screen after mounting or resumed"""
-        self.mounted = True
-        self.loading_indicator.visible = True
-        self.update_self()
-
-        # fetch contracts
-        self.contracts_to_display = self.intent.get_all_as_map()
-        count = len(self.contracts_to_display)
-        if count == 0:
-            self.no_contracts_control.visible = True
-            self.contracts_container.controls.clear()
-        else:
-            self.no_contracts_control.visible = False
-            self.display_currently_filtered_contracts()
-        self.loading_indicator.visible = False
-        self.update_self()
-
-    def build(self):
-        """Builds the view for the screen."""
-        view = Column(
-            controls=[
-                self.title_control,
-                views.Spacer(md_space=True),
-                ContractFiltersView(onStateChanged=self.on_filter_contracts),
-                views.Spacer(md_space=True),
-                Container(self.contracts_container, expand=True),
-            ]
-        )
-        return view
+    def get_filters_view(self):
+        return views.EntityFiltersView(on_state_changed=self.on_filter_changed)
 
     def will_unmount(self):
-        """Called when the screen is unmounted. Sets the mounted flag to false."""
-        self.mounted = False
-        if self.pop_up_handler:
-            self.pop_up_handler.dimiss_open_dialogs()
+        super().will_unmount()
+        if self.popup_handler:
+            self.popup_handler.dimiss_open_dialogs()
 
 
-class ViewContractScreen(TView, Row):
+class ViewContractScreen(views.EntityDetailScreen):
     """Screen to view the details of a contract."""
 
-    def __init__(
-        self,
-        params: TViewParams,
-        contract_id: str,
-    ):
-        super().__init__(params)
-        self.intent = ContractsIntent()
-        self.contract_id = contract_id
-        self.loading_indicator = views.TProgressBar()
-        self.contract: Optional[Contract] = None
-        self.pop_up_handler = None
+    entity_name = "contract"
+    edit_route = res_utils.CONTRACT_EDITOR_SCREEN_ROUTE
 
-    def display_contract_data(self):
+    def __init__(self, params: TViewParams, contract_id: str):
+        super().__init__(params, contract_id, ContractsIntent())
+
+    def display_entity_data(self):
         """Displays the data for the contract."""
-        self.contract_title_control.value = self.contract.title
-        self.client_control.value = (
-            self.contract.client.name if self.contract.client else "Unknown"
-        )
-        self.contract_title_control.value = self.contract.title
-        self.start_date_control.value = self.contract.start_date
-        self.end_date_control.value = self.contract.end_date
-        _status = self.contract.get_status(default="")
+        c = self.entity
+        self.contract_title_control.value = c.title
+        self.client_control.value = c.client.name if c.client else "Unknown"
+        self.start_date_control.value = c.start_date
+        self.end_date_control.value = c.end_date
+        _status = c.get_status(default="")
         if _status:
             self.status_control.value = f"Status {_status}"
             self.status_control.visible = True
         else:
             self.status_control.visible = False
         self.billing_cycle_control.value = (
-            self.contract.billing_cycle.value if self.contract.billing_cycle else ""
+            c.billing_cycle.value if c.billing_cycle else ""
         )
-        self.rate_control.value = self.contract.rate
-        self.currency_control.value = self.contract.currency
-        self.vat_rate_control.value = f"{(self.contract.VAT_rate) * 100:.0f} %"
-        time_unit = self.contract.unit.value if self.contract.unit else ""
+        self.rate_control.value = c.rate
+        self.currency_control.value = c.currency
+        self.vat_rate_control.value = f"{(c.VAT_rate) * 100:.0f} %"
+        time_unit = c.unit.value if c.unit else ""
         self.unit_control.value = time_unit
-        self.units_per_workday_control.value = (
-            f"{self.contract.units_per_workday} {time_unit}"
-        )
-        self.volume_control.value = f"{self.contract.volume} {time_unit}"
-        self.term_of_payment_control.value = f"{self.contract.term_of_payment} days"
-        self.signature_date_control.value = self.contract.signature_date
+        self.units_per_workday_control.value = f"{c.units_per_workday} {time_unit}"
+        self.volume_control.value = f"{c.volume} {time_unit}"
+        self.term_of_payment_control.value = f"{c.term_of_payment} days"
+        self.signature_date_control.value = c.signature_date
         self.toggle_compete_status_btn.tooltip = (
-            "Mark as incomplete" if self.contract.is_completed else "Mark as completed"
+            "Mark as incomplete" if c.is_completed else "Mark as completed"
         )
         self.toggle_compete_status_btn.icon = (
             icons.RADIO_BUTTON_CHECKED_OUTLINED
-            if self.contract.is_completed
+            if c.is_completed
             else icons.RADIO_BUTTON_UNCHECKED_OUTLINED
-        )
-
-    def did_mount(self):
-        """Called when the screen is mounted. Initializes the data."""
-        self.reload_data()
-
-    def on_resume_after_back_pressed(self):
-        """Called when the screen is resumed after the back button was pressed."""
-        self.reload_data()
-
-    def reload_data(self):
-        """Reloads the data for the screen after mounting or resumed"""
-        self.mounted = True
-        result: IntentResult = self.intent.get_by_id(self.contract_id)
-        if not result.was_intent_successful:
-            self.show_snack(result.error_msg, True)
-        else:
-            self.contract = result.data
-            self.display_contract_data()
-        self.loading_indicator.visible = False
-        self.update_self()
-
-    def on_view_client_clicked(self, e):
-        """Called when the view client button is clicked."""
-        if not self.contract or not self.contract.client:
-            return
-        if self.pop_up_handler:
-            self.pop_up_handler.close_dialog()
-        self.pop_up_handler = ClientViewPopUp(
-            dialog_controller=self.dialog_controller, client=self.contract.client
-        )
-        self.pop_up_handler.open_dialog()
-
-    def on_toggle_complete_status(self, e):
-        """Called when the toggle complete status button is clicked."""
-        if not self.contract:
-            return
-        result: IntentResult = self.intent.toggle_complete_status(self.contract)
-        is_error = not result.was_intent_successful
-        msg = "Updated contract." if not is_error else result.error_msg
-        self.show_snack(msg, is_error)
-        if not is_error:
-            self.contract = result.data
-            self.display_contract_data()
-            self.update_self()
-
-    def on_edit_clicked(self, e):
-        """Called when the edit button is clicked. Redirects to the contract editor screen."""
-        if not self.contract:
-            return  # should not happen
-        self.navigate_to_route(res_utils.CONTRACT_EDITOR_SCREEN_ROUTE, self.contract.id)
-
-    def on_delete_clicked(self, e):
-        """Called when the delete button is clicked. Opens a confirmation dialog."""
-        if self.contract is None:
-            return
-        if self.pop_up_handler:
-            self.pop_up_handler.close_dialog()
-        # open confirmation dialog
-        self.pop_up_handler = views.ConfirmDisplayPopUp(
-            dialog_controller=self.dialog_controller,
-            title="Are You Sure?",
-            description=f"Are you sure you wish to delete this contract?\n{self.contract.title}",
-            on_proceed=self.on_delete_confirmed,
-            proceed_button_label="Yes! Delete",
-            data_on_confirmed=self.contract.id,
-        )
-        self.pop_up_handler.open_dialog()
-
-    def on_delete_confirmed(self, contract_id):
-        """Called when the user confirms the deletion of the contract."""
-        result = self.intent.delete(contract_id)
-        is_err = not result.was_intent_successful
-        msg = result.error_msg if is_err else "Contract deleted!"
-        self.show_snack(msg, is_err)
-        if not is_err:
-            # go back
-            self.navigate_back()
-
-    def get_body_element(self, label, control):
-        """Returns a row with a label and a control."""
-        return ResponsiveRow(
-            controls=[
-                views.TBodyText(
-                    txt=label,
-                    color=colors.GRAY_COLOR,
-                    size=fonts.BODY_2_SIZE,
-                    col={
-                        "xs": 12,
-                    },
-                ),
-                control,
-            ],
-            spacing=dimens.SPACE_XS,
-            run_spacing=0,
-            vertical_alignment=utils.CENTER_ALIGNMENT,
         )
 
     def build(self):
@@ -929,47 +652,24 @@ class ViewContractScreen(TView, Row):
 
         self.client_control = views.THeading()
         self.contract_title_control = views.THeading()
-        self.billing_cycle_control = views.TBodyText(
-            align=utils.TXT_ALIGN_JUSTIFY,
-        )
-        self.rate_control = views.TBodyText(
-            align=utils.TXT_ALIGN_JUSTIFY,
-        )
-        self.currency_control = views.TBodyText(
-            align=utils.TXT_ALIGN_JUSTIFY,
-        )
-        self.vat_rate_control = views.TBodyText(
-            align=utils.TXT_ALIGN_JUSTIFY,
-        )
-        self.unit_control = views.TBodyText(
-            align=utils.TXT_ALIGN_JUSTIFY,
-        )
-        self.units_per_workday_control = views.TBodyText(
-            align=utils.TXT_ALIGN_JUSTIFY,
-        )
-        self.volume_control = views.TBodyText(
-            align=utils.TXT_ALIGN_JUSTIFY,
-        )
-        self.term_of_payment_control = views.TBodyText(
-            align=utils.TXT_ALIGN_JUSTIFY,
-        )
+        self.billing_cycle_control = views.TBodyText(align=utils.TXT_ALIGN_JUSTIFY)
+        self.rate_control = views.TBodyText(align=utils.TXT_ALIGN_JUSTIFY)
+        self.currency_control = views.TBodyText(align=utils.TXT_ALIGN_JUSTIFY)
+        self.vat_rate_control = views.TBodyText(align=utils.TXT_ALIGN_JUSTIFY)
+        self.unit_control = views.TBodyText(align=utils.TXT_ALIGN_JUSTIFY)
+        self.units_per_workday_control = views.TBodyText(align=utils.TXT_ALIGN_JUSTIFY)
+        self.volume_control = views.TBodyText(align=utils.TXT_ALIGN_JUSTIFY)
+        self.term_of_payment_control = views.TBodyText(align=utils.TXT_ALIGN_JUSTIFY)
 
-        self.signature_date_control = views.TBodyText(
-            align=utils.TXT_ALIGN_JUSTIFY,
-        )
-        self.start_date_control = views.TBodyText(
-            align=utils.TXT_ALIGN_JUSTIFY,
-        )
-        self.end_date_control = views.TBodyText(
-            align=utils.TXT_ALIGN_JUSTIFY,
-        )
+        self.signature_date_control = views.TBodyText(align=utils.TXT_ALIGN_JUSTIFY)
+        self.start_date_control = views.TBodyText(align=utils.TXT_ALIGN_JUSTIFY)
+        self.end_date_control = views.TBodyText(align=utils.TXT_ALIGN_JUSTIFY)
 
         self.status_control = views.TBodyText(
-            size=fonts.BUTTON_SIZE,
-            color=colors.PRIMARY_COLOR,
+            size=fonts.BUTTON_SIZE, color=colors.PRIMARY_COLOR
         )
 
-        return Row(
+        self.content = Row(
             [
                 Container(
                     padding=padding.all(dimens.SPACE_STD),
@@ -1029,8 +729,7 @@ class ViewContractScreen(TView, Row):
                                                 ],
                                             ),
                                             self.get_body_element(
-                                                "Title",
-                                                self.contract_title_control,
+                                                "Title", self.contract_title_control
                                             ),
                                             self.get_body_element(
                                                 "Client", self.client_control
@@ -1048,8 +747,7 @@ class ViewContractScreen(TView, Row):
                             self.get_body_element("Vat Rate", self.vat_rate_control),
                             self.get_body_element("Time Unit", self.unit_control),
                             self.get_body_element(
-                                "Units per Workday",
-                                self.units_per_workday_control,
+                                "Units per Workday", self.units_per_workday_control
                             ),
                             self.get_body_element("Volume", self.volume_control),
                             self.get_body_element(
@@ -1088,7 +786,3 @@ class ViewContractScreen(TView, Row):
             vertical_alignment=utils.START_ALIGNMENT,
             expand=True,
         )
-
-    def will_unmount(self):
-        """called when the view is about to be unmounted"""
-        self.mounted = False

@@ -132,6 +132,7 @@ class User(SQLModel, table=True):
         sa_relationship_kwargs={"lazy": "subquery"},
     )
     VAT_number: Optional[str] = Field(
+        default=None,
         description="Value Added Tax number of the user, legally required for invoices.",
     )
     # User 1:1* ICloudAccount
@@ -662,7 +663,7 @@ class InvoiceItem(SQLModel, table=True):
         description="End date of the invoice item."
     )
     #
-    quantity: int
+    quantity: float
     unit: str
     unit_price: Decimal
     description: str
@@ -676,8 +677,7 @@ class InvoiceItem(SQLModel, table=True):
 
     @property
     def subtotal(self) -> Decimal:
-        """."""
-        return self.quantity * self.unit_price
+        return Decimal(str(self.quantity)) * self.unit_price
 
     @property
     def VAT(self) -> Decimal:

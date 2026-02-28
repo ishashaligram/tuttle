@@ -73,6 +73,21 @@ def _convert_html_to_pdf_with_weasyprint(
     css_paths=[],
 ):
     """Implementation of convert_html_to_pdf using weasyprint."""
+    # On macOS with Homebrew, weasyprint needs the Homebrew lib path
+    # to find pango/gobject native libraries at runtime.
+    if sys.platform == "darwin":
+        import subprocess
+
+        try:
+            brew_prefix = subprocess.check_output(["brew", "--prefix"]).decode().strip()
+            lib_path = os.path.join(brew_prefix, "lib")
+            existing = os.environ.get("DYLD_FALLBACK_LIBRARY_PATH", "")
+            if lib_path not in existing:
+                os.environ["DYLD_FALLBACK_LIBRARY_PATH"] = (
+                    f"{lib_path}:{existing}" if existing else lib_path
+                )
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            pass  # Homebrew not installed; hope libraries are on the default path
     try:
         import weasyprint
     except ImportError:
@@ -230,6 +245,16 @@ def render_timesheet(
     template_env = jinja2.Environment(loader=jinja2.FileSystemLoader(template_path))
     # filters
     template_env.filters["as_hours"] = lambda td: td / pandas.Timedelta("1 hour")
+    template_env.filters["date"] = lambda dt: dt.strftime("%Y-%m-%d") if dt else ""
+    template_env.filters["time"] = lambda dt: dt.strftime("%H:%M") if dt else ""
+    template_env.filters["datetime"] = (
+        lambda dt: dt.strftime("%Y-%m-%d %H:%M") if dt else ""
+    )
+    template_env.filters["hours_minutes"] = (
+        lambda td: f"{int(td.total_seconds() // 3600)}:{int((td.total_seconds() % 3600) // 60):02d}"
+        if td
+        else ""
+    )
 
     timesheet_template = template_env.get_template("timesheet.html")
     html = timesheet_template.render(user=user, timesheet=timesheet, style=style)

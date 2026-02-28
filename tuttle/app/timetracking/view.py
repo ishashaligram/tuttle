@@ -7,12 +7,10 @@ from flet import (
     AlertDialog,
     Column,
     Container,
-    FilePickerResultEvent,
-    FilePickerUploadEvent,
     ResponsiveRow,
     Text,
-    UserControl,
-    border,
+    Control,
+    Border,
 )
 
 from ..core import tabular, utils, views
@@ -37,9 +35,10 @@ class TwoFAPopUp(DialogHandler):
         title: Optional[str] = "Enter the verification code",
     ):
 
-        dialog_width = int(dimens.MIN_WINDOW_WIDTH * 0.8)
+        dialog_width = 480
         title = title
         dialog = AlertDialog(
+            bgcolor=colors.bg_surface,
             content=Container(
                 content=Column(
                     scroll=utils.AUTO_SCROLL,
@@ -87,9 +86,10 @@ class NewTimeTrackPopUp(DialogHandler):
 
         space_between_cloud_controls = views.Spacer(xs_space=True)
         space_between_cloud_controls.visible = display_cloud_option
-        dialog_width = int(dimens.MIN_WINDOW_WIDTH * 0.8)
+        dialog_width = 480
         title = "Track your progress"
         dialog = AlertDialog(
+            bgcolor=colors.bg_surface,
             content=Container(
                 content=Column(
                     scroll=utils.AUTO_SCROLL,
@@ -124,7 +124,6 @@ class NewTimeTrackPopUp(DialogHandler):
                                 password=self.password,
                                 calendar_name=self.calendar_name,
                             ),
-                            width=int(dialog_width * 0.9),
                             show=display_cloud_option,
                         ),
                         space_between_cloud_controls,
@@ -134,7 +133,6 @@ class NewTimeTrackPopUp(DialogHandler):
                             label="Upload a calendar (.ics) file",
                             icon="calendar_month",
                             on_click=lambda _: on_use_file_callback(is_ics=True),
-                            width=int(dialog_width * 0.9),
                         ),
                         views.OrView(show_lines=False),
                         views.Spacer(xs_space=True),
@@ -144,7 +142,6 @@ class NewTimeTrackPopUp(DialogHandler):
                             on_click=lambda _: on_use_file_callback(
                                 is_spreadsheet=True
                             ),
-                            width=int(dialog_width * 0.9),
                         ),
                         views.Spacer(xs_space=True),
                     ],
@@ -163,7 +160,7 @@ class NewTimeTrackPopUp(DialogHandler):
         self.password = e.control.value
 
 
-class TimeTrackingView(TView, UserControl):
+class TimeTrackingView(TView, Column):
     """Time tracking view on home page"""
 
     def __init__(self, params):
@@ -172,7 +169,7 @@ class TimeTrackingView(TView, UserControl):
         self.preferred_cloud_acc = ""
         self.preferred_cloud_provider = ""
         self.pop_up_handler = None
-        self.dataframe_to_display: Optional[DataFrame] = None
+        object.__setattr__(self, "dataframe_to_display", None)
 
     def close_pop_up_if_open(self):
         if self.pop_up_handler:
@@ -216,7 +213,7 @@ class TimeTrackingView(TView, UserControl):
         )
         self.set_progress_hint()
 
-    def on_file_picker_result(self, e: FilePickerResultEvent):
+    def on_file_picker_result(self, e):
         """Handle file picker result"""
         if e.files and len(e.files) > 0:
             file = e.files[0]
@@ -228,7 +225,9 @@ class TimeTrackingView(TView, UserControl):
         else:
             self.set_progress_hint(hide_progress=True)
 
-    def extract_dataframe_from_file(self,):
+    def extract_dataframe_from_file(
+        self,
+    ):
 
         """Execute intent to process file"""
         if not self.uploaded_file_path:
@@ -246,7 +245,7 @@ class TimeTrackingView(TView, UserControl):
         is_error = not intent_result.was_intent_successful
         self.show_snack(msg, is_error)
         if intent_result.was_intent_successful:
-            self.dataframe_to_display = intent_result.data
+            object.__setattr__(self, "dataframe_to_display", intent_result.data)
             self.update_timetracking_dataframe()
             self.display_dataframe()
         self.set_progress_hint(hide_progress=True)
@@ -379,7 +378,7 @@ class TimeTrackingView(TView, UserControl):
                 is_error=True,
             )
             return
-        self.dataframe_to_display = result.data
+        object.__setattr__(self, "dataframe_to_display", result.data)
         self.update_timetracking_dataframe()
         self.display_dataframe()
 
@@ -391,7 +390,7 @@ class TimeTrackingView(TView, UserControl):
             self.show_snack(result.error_msg, is_error=True)
             return
         if isinstance(result.data, DataFrame):
-            self.dataframe_to_display = result.data
+            object.__setattr__(self, "dataframe_to_display", result.data)
 
     def update_timetracking_dataframe(self):
         result = self.intent.set_timetracking_data(self.dataframe_to_display)
@@ -404,7 +403,7 @@ class TimeTrackingView(TView, UserControl):
         data_table = tabular.data_frame_to_data_table(
             data_frame=self.dataframe_to_display.sort_index().reset_index(),
             table_style={
-                "border": border.all(),
+                "border": Border.all(),
                 "border_radius": 10,
             },
         )
@@ -444,7 +443,7 @@ class TimeTrackingView(TView, UserControl):
         self.loading_indicator = views.TProgressBar()
         self.no_timetrack_control = views.TBodyText(
             txt="You have not logged any work progress yet.",
-            color=colors.ERROR_COLOR,
+            color=colors.text_muted,
             show=False,
         )
         self.ongoing_action_hint = views.TBodyText(show=False)
@@ -464,13 +463,11 @@ class TimeTrackingView(TView, UserControl):
             ]
         )
         self.timetracked_container = Container(expand=True)
-        return Column(
-            controls=[
-                self.title_control,
-                views.Spacer(md_space=True),
-                self.timetracked_container,
-            ]
-        )
+        self.controls = [
+            self.title_control,
+            views.Spacer(md_space=True),
+            self.timetracked_container,
+        ]
 
     def will_unmount(self):
         self.mounted = False

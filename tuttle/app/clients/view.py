@@ -9,9 +9,11 @@ from flet import (
     ListTile,
     ResponsiveRow,
     Row,
-    UserControl,
-    border_radius,
-    padding,
+    Text,
+    Control,
+    Alignment,
+    Border,
+    Padding,
 )
 
 from ..clients.intent import ClientsIntent
@@ -23,8 +25,13 @@ from ..res import colors, dimens, fonts, res_utils
 from ...model import Address, Client, Contact
 
 
-class ClientCard(UserControl):
-    """Formats a single client info into a card ui display"""
+def _initials(name: str) -> str:
+    parts = (name or "").split()
+    return "".join(p[0].upper() for p in parts[:2]) if parts else "?"
+
+
+class ClientCard(Container):
+    """Flat bordered card for a client entity."""
 
     def __init__(
         self,
@@ -32,98 +39,107 @@ class ClientCard(UserControl):
         on_edit: Optional[Callable] = None,
         on_delete: Optional[Callable] = None,
     ):
-        super().__init__()
         self.client = client
-        self.client_info_container = Column(spacing=0, run_spacing=0)
         self.on_edit_clicked = on_edit
         self.on_delete_clicked = on_delete
 
-    def build(self):
-        """Builds the client card"""
-        if self.client.invoicing_contact:
-            invoicing_contact_info = self.client.invoicing_contact.print_address()
-        else:
-            invoicing_contact_info = "*not specified"
-        editable = True if self.on_edit_clicked or self.on_delete_clicked else None
+        initials = _initials(client.name)
+        avatar = Container(
+            width=36,
+            height=36,
+            bgcolor=colors.accent_muted,
+            border_radius=dimens.RADIUS_LG,
+            alignment=Alignment.CENTER,
+            content=Text(
+                initials,
+                size=fonts.BODY_1_SIZE,
+                color=colors.accent,
+                weight=fonts.BOLD_FONT,
+            ),
+        )
 
-        editor_controls = (
+        editable = on_edit or on_delete
+        trailing = (
             views.TContextMenu(
-                on_click_delete=lambda e: self.on_delete_clicked(self.client),
-                on_click_edit=lambda e: self.on_edit_clicked(self.client),
+                on_click_delete=lambda e: self.on_delete_clicked(client),
+                on_click_edit=lambda e: self.on_edit_clicked(client),
             )
             if editable
             else views.Spacer(sm_space=True)
         )
 
-        self.client_info_container.controls = [
-            ListTile(
-                leading=Icon(
-                    utils.TuttleComponentIcons.client_icon,
-                    size=dimens.MD_ICON_SIZE,
-                ),
-                title=views.TBodyText(self.client.name),
-                trailing=editor_controls,
-            ),
-            views.Spacer(md_space=True),
-            ResponsiveRow(
-                controls=[
-                    views.TBodyText(
-                        txt="Invoicing Contact",
-                        color=colors.GRAY_COLOR,
-                        size=fonts.BODY_2_SIZE,
-                        col={"xs": "12"},
-                    ),
-                    views.TBodyText(
-                        txt=invoicing_contact_info,
-                        size=fonts.BODY_2_SIZE,
-                        col={"xs": "12"},
-                    ),
-                ],
-                spacing=dimens.SPACE_XS,
-                run_spacing=0,
-                vertical_alignment=utils.CENTER_ALIGNMENT,
-            ),
-        ]
+        if client.invoicing_contact:
+            contact_info = client.invoicing_contact.print_address()
+        else:
+            contact_info = "Not specified"
 
-        card = Card(
-            elevation=2,
+        super().__init__(
             expand=True,
-            content=Container(
-                expand=True,
-                padding=padding.all(dimens.SPACE_STD),
-                border_radius=border_radius.all(12),
-                content=self.client_info_container,
+            bgcolor=colors.bg_surface,
+            border=Border.all(dimens.CARD_BORDER_WIDTH, colors.border),
+            border_radius=dimens.RADIUS_LG,
+            padding=Padding.all(dimens.SPACE_MD),
+            on_hover=self._on_hover,
+            content=Column(
+                spacing=dimens.SPACE_SM,
+                controls=[
+                    Row(
+                        controls=[
+                            Row(
+                                controls=[
+                                    avatar,
+                                    views.TBodyText(
+                                        client.name, weight=fonts.BOLD_FONT
+                                    ),
+                                ],
+                                spacing=dimens.SPACE_SM,
+                                vertical_alignment=utils.CENTER_ALIGNMENT,
+                            ),
+                            trailing,
+                        ],
+                        alignment=utils.SPACE_BETWEEN_ALIGNMENT,
+                        vertical_alignment=utils.CENTER_ALIGNMENT,
+                    ),
+                    Container(height=1, bgcolor=colors.border_subtle),
+                    views.TBodyText(
+                        "Invoicing Contact",
+                        color=colors.text_muted,
+                        size=fonts.OVERLINE_SIZE,
+                    ),
+                    views.TBodyText(contact_info, size=fonts.BODY_2_SIZE),
+                ],
             ),
         )
-        return card
+
+    def _on_hover(self, e):
+        self.bgcolor = (
+            colors.bg_surface_hovered if e.data == "true" else colors.bg_surface
+        )
+        self.update()
 
 
-class ClientViewPopUp(DialogHandler, UserControl):
-    """Pop up used to displaying a client"""
+class ClientViewPopUp(DialogHandler, Column):
+    """Pop up for viewing a client."""
 
     def __init__(
         self,
         dialog_controller: Callable[[any, utils.AlertDialogControls], None],
         client: Client,
     ):
-        # dimensions of the pop up and the elements inside
-        # accounting for margins and paddings
-
-        pop_up_width = int(dimens.MIN_WINDOW_WIDTH * 0.8)
-
         dialog = AlertDialog(
+            bgcolor=colors.bg_surface,
             content=Container(
                 content=Column(
                     scroll=utils.AUTO_SCROLL,
                     controls=[ClientCard(client=client)],
                 ),
-                width=pop_up_width,
+                width=480,
             ),
         )
         super().__init__(dialog=dialog, dialog_controller=dialog_controller)
 
 
-class ClientEditorPopUp(DialogHandler, UserControl):
+class ClientEditorPopUp(DialogHandler, Column):
     """Pop up used for creating or updating a client"""
 
     def __init__(
@@ -162,6 +178,10 @@ class ClientEditorPopUp(DialogHandler, UserControl):
             self.invoicing_contact.id
         )
 
+        pop_up_height = 550
+        pop_up_width = 480
+        half_width = 220
+
         self.first_name_field = views.TTextField(
             label="First Name",
             hint=self.invoicing_contact.first_name,
@@ -188,25 +208,25 @@ class ClientEditorPopUp(DialogHandler, UserControl):
             label="Street",
             hint=self.invoicing_contact.address.street,
             initial_value=self.invoicing_contact.address.street,
-            width=half_of_pop_up_width,
+            width=half_width,
         )
         self.street_num_field = views.TTextField(
             label="Street No.",
             hint=self.invoicing_contact.address.number,
             initial_value=self.invoicing_contact.address.number,
-            width=half_of_pop_up_width,
+            width=half_width,
         )
         self.postal_code_field = views.TTextField(
             label="Postal code",
             hint=self.invoicing_contact.address.postal_code,
             initial_value=self.invoicing_contact.address.postal_code,
-            width=half_of_pop_up_width,
+            width=half_width,
         )
         self.city_field = views.TTextField(
             label="City",
             hint=self.invoicing_contact.address.city,
             initial_value=self.invoicing_contact.address.city,
-            width=half_of_pop_up_width,
+            width=half_width,
         )
         self.country_field = views.TTextField(
             label="Country",
@@ -228,29 +248,23 @@ class ClientEditorPopUp(DialogHandler, UserControl):
         self.form_error_field = views.TErrorText(txt="", show=False)
 
         dialog = AlertDialog(
+            bgcolor=colors.bg_surface,
             content=Container(
                 height=pop_up_height,
                 content=Column(
                     scroll=utils.AUTO_SCROLL,
+                    spacing=dimens.SPACE_SM,
                     controls=[
                         views.THeading(title=title, size=fonts.HEADLINE_4_SIZE),
-                        views.Spacer(xs_space=True),
                         self.form_error_field,
-                        views.Spacer(xs_space=True),
                         self.client_name_field,
-                        views.Spacer(xs_space=True),
-                        views.THeading(
-                            title="Invoicing Contact",
-                            size=fonts.SUBTITLE_2_SIZE,
-                            color=colors.GRAY_COLOR,
-                        ),
-                        views.Spacer(xs_space=True),
+                        views.SectionLabel("Invoicing Contact"),
                         self.contacts_dropdown,
-                        views.Spacer(xs_space=True),
                         self.first_name_field,
                         self.last_name_field,
                         self.company_field,
                         self.email_field,
+                        views.SectionLabel("Address"),
                         Row(
                             vertical_alignment=utils.CENTER_ALIGNMENT,
                             controls=[self.street_field, self.street_num_field],
@@ -263,13 +277,12 @@ class ClientEditorPopUp(DialogHandler, UserControl):
                             ],
                         ),
                         self.country_field,
-                        views.Spacer(),
                     ],
                 ),
                 width=pop_up_width,
             ),
             actions=[
-                views.TPrimaryButton(label="Done", on_click=self.on_submit_btn_clicked),
+                views.TPrimaryButton(label="Save", on_click=self.on_submit_btn_clicked),
             ],
         )
         super().__init__(dialog=dialog, dialog_controller=dialog_controller)
@@ -398,176 +411,72 @@ class ClientEditorPopUp(DialogHandler, UserControl):
 
     def build(self):
         """Builds the dialog"""
-        return self.dialog
+        self.controls = [self.dialog]
 
 
-class ClientsListView(TView, UserControl):
+class ClientsListView(views.CrudListView):
     """View for displaying a list of clients"""
 
+    entity_name = "client"
+    entity_name_plural = "clients"
+    on_add_intent_key = res_utils.ADD_CLIENT_INTENT
+
     def __init__(self, params: TViewParams):
-        super().__init__(params=params)
         self.intent = ClientsIntent()
-        self.loading_indicator = views.TProgressBar()
-        self.no_clients_control = views.TBodyText(
-            txt="You have not added any clients yet.",
-            color=colors.ERROR_COLOR,
-            show=False,
-        )
-        self.title_control = ResponsiveRow(
-            controls=[
-                Column(
-                    col={"xs": 12},
-                    controls=[
-                        views.THeading(title="My Clients", size=fonts.HEADLINE_4_SIZE),
-                        self.loading_indicator,
-                        self.no_clients_control,
-                    ],
-                )
-            ]
-        )
-        self.clients_container = views.THomeGrid()
-        self.clients_to_display = {}
+        super().__init__(params=params)
         self.contacts = {}
         self.editor = None
 
-    def parent_intent_listener(self, intent: str, data: any):
-        """Handles intents from the parent view"""
-        if intent == res_utils.ADD_CLIENT_INTENT:
-            # Open the client editor
-            if self.editor is not None:
-                self.editor.close_dialog()
-            self.editor = ClientEditorPopUp(
-                self.dialog_controller,
-                on_submit=self.on_save_client,
-                contacts_map=self.contacts,
-                on_error=lambda error: self.show_snack(
-                    error,
-                    is_error=True,
-                ),
-            )
-            self.editor.open_dialog()
-        elif intent == res_utils.RELOAD_INTENT:
-            # Reload all data for the view
-            self.reload_all_data()
+    def make_card(self, client):
+        return ClientCard(
+            client=client,
+            on_edit=self.on_edit_client_clicked,
+            on_delete=lambda c: self.on_delete_clicked(c),
+        )
 
-    def load_all_clients(self):
-        """Loads all clients from the store"""
-        self.clients_to_display = self.intent.get_all_clients_as_map()
+    def get_entity_description(self, client):
+        return client.name
 
-    def load_all_contacts(self):
-        """Loads all contacts from the store"""
+    def load_extra_data(self):
         self.contacts = self.intent.get_all_contacts_as_map()
 
-    def refresh_clients(self):
-        """Refreshes the clients list"""
-        self.clients_container.controls.clear()
-        for key in self.clients_to_display:
-            client = self.clients_to_display[key]
-            clientCard = ClientCard(
-                client=client,
-                on_edit=self.on_edit_client_clicked,
-                on_delete=self.on_delete_client_clicked,
-            )
-            self.clients_container.controls.append(clientCard)
-
-    def on_edit_client_clicked(self, client: Client):
-        """Handles the edit button click event"""
-        if self.editor is not None:
+    def open_add_editor(self, data=None):
+        if self.editor:
             self.editor.close_dialog()
         self.editor = ClientEditorPopUp(
             self.dialog_controller,
-            on_submit=self.on_save_client,
+            on_submit=self._on_save_client,
+            contacts_map=self.contacts,
+            on_error=lambda error: self.show_snack(error, is_error=True),
+        )
+        self.editor.open_dialog()
+
+    def on_edit_client_clicked(self, client: Client):
+        if self.editor:
+            self.editor.close_dialog()
+        self.editor = ClientEditorPopUp(
+            self.dialog_controller,
+            on_submit=self._on_save_client,
             contacts_map=self.contacts,
             client=client,
-            on_error=lambda error: self.show_snack(
-                error,
-                is_error=True,
-            ),
+            on_error=lambda error: self.show_snack(error, is_error=True),
         )
         self.editor.open_dialog()
 
-    def on_delete_client_clicked(self, client: Client):
-        """Handles the delete button click event"""
-        if self.editor is not None:
-            self.editor.close_dialog()
-        # Open a confirmation dialog
-        self.editor = views.ConfirmDisplayPopUp(
-            dialog_controller=self.dialog_controller,
-            title="Are You Sure?",
-            description=f"Are you sure you wish to delete this client's info?\n{client.name}",
-            on_proceed=self.on_delete_confirmed,
-            proceed_button_label="Yes! Delete",
-            data_on_confirmed=client.id,
-        )
-        self.editor.open_dialog()
-
-    def on_delete_confirmed(self, client_id):
-        """called when the user confirms the deletion of a client"""
+    def _on_save_client(self, client_to_save: Client):
         self.loading_indicator.visible = True
         self.update_self()
-        result = self.intent.delete_client_by_id(client_id)
+        result = self.intent.save_client(client_to_save)
         is_error = not result.was_intent_successful
-        msg = result.error_msg if is_error else "Client deleted!"
+        if not is_error:
+            self.items_to_display[result.data.id] = result.data
+            self.refresh_list()
+        msg = result.error_msg if is_error else "Client saved!"
         self.show_snack(msg, is_error)
-        if not is_error and client_id in self.clients_to_display:
-            del self.clients_to_display[client_id]
-            self.refresh_clients()
         self.loading_indicator.visible = False
         self.update_self()
-
-    def on_save_client(self, client_to_save: Client):
-        """Handles the save event from the client editor"""
-        is_updating = client_to_save.id is not None
-        self.loading_indicator.visible = True
-        self.update_self()
-        result: IntentResult = self.intent.save_client(client_to_save)
-        if not result.was_intent_successful:
-            self.show_snack(result.error_msg, True)
-        else:
-            self.clients_to_display[result.data.id] = result.data
-            self.refresh_clients()
-            msg = (
-                "The client's info has been updated"
-                if is_updating
-                else "A new client has been added"
-            )
-            self.show_snack(msg, False)
-        self.loading_indicator.visible = False
-        self.update_self()
-
-    def did_mount(self):
-        """Called when the view is mounted"""
-        self.reload_all_data()
-
-    def reload_all_data(self):
-        """Reloads all data for the view when the view is mounted or a reload-intent is received"""
-        self.mounted = True
-        self.loading_indicator.visible = True
-        self.load_all_clients()
-        count = len(self.clients_to_display)
-        self.loading_indicator.visible = False
-        if count == 0:
-            self.no_clients_control.visible = True
-            self.clients_container.controls.clear()
-        else:
-            self.no_clients_control.visible = False
-            self.refresh_clients()
-        self.load_all_contacts()
-        self.update_self()
-
-    def build(self):
-        """Builds the view"""
-        view = Column(
-            controls=[
-                self.title_control,
-                views.Spacer(md_space=True),
-                Container(self.clients_container, expand=True),
-            ],
-        )
-        return view
 
     def will_unmount(self):
-        """Called when the view is unmounted"""
-        self.mounted = False
+        super().will_unmount()
         if self.editor:
             self.editor.dimiss_open_dialogs()

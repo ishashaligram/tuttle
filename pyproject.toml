@@ -74,7 +74,7 @@ packages = ["tuttle"]
 collect_ignore = ["setup.py"]
 
 [tool.flake8]
-exclude = ["docs"]
+exclude = ["docs", ".venv"]
 
 [tool.isort]
 include_trailing_comma = true

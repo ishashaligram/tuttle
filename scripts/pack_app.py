@@ -34,7 +34,7 @@ pack_options = [
     ("--product-version", tuttle.__version__),
     (
         "--copyright",
-        "(c) 2021-2023 Tuttle developers. Licsened under the GNU GPL v3.0.",
+        "(c) 2021-2026 Tuttle developers. Licensed under the GNU GPL v3.0.",
     ),
 ]
 

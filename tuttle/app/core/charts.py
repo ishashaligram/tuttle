@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 from matplotlib.widgets import Slider
 
 matplotlib.use("svg")
-from flet import Control
+from flet import Container, Control
 
 from ..custom_flet.custom_mat_chart import CustomMatplotlibChart
 from ..res.colors import GRAY_COLOR, PRIMARY_COLOR, WHITE_COLOR

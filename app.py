@@ -178,6 +178,12 @@ class TuttleApp:
             action=action,
             open=True,
         )
+
+        def on_snack_dismiss(e):
+            if snack in self.page.overlay:
+                self.page.overlay.remove(snack)
+
+        snack.on_dismiss = on_snack_dismiss
         self.page.show_dialog(snack)
 
     def control_alert_dialog(
@@ -232,6 +238,12 @@ class TuttleApp:
         if current_route in self.route_to_route_view_cache:
             # route already visited: reuse cached view
             self.current_route_view = self.route_to_route_view_cache[current_route]
+            if not self.current_route_view.keep_back_stack:
+                self.route_to_route_view_cache.clear()
+                self.route_to_route_view_cache[current_route] = self.current_route_view
+                self.page.views.clear()
+            if self.current_route_view.view not in self.page.views:
+                self.page.views.append(self.current_route_view.view)
             self.page.update()
             self.current_route_view.on_window_resized(
                 self.page.window.width, self.page.window.height

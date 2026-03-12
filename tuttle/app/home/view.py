@@ -50,7 +50,26 @@ def get_toolbar(
     on_view_settings_clicked: Callable,
 ):
     """Slim toolbar — actions only, no redundant title."""
-    return Container(
+    new_btn = TextButton(
+        content=Row(
+            controls=[
+                Icon(
+                    Icons.ADD,
+                    size=dimens.SM_ICON_SIZE,
+                    color=colors.accent,
+                ),
+                Text(
+                    "New",
+                    size=fonts.BODY_1_SIZE,
+                    color=colors.accent,
+                    weight=fonts.BOLD_FONT,
+                ),
+            ],
+            spacing=dimens.SPACE_XXS,
+        ),
+        on_click=on_click_new_btn,
+    )
+    toolbar = Container(
         alignment=Alignment.CENTER,
         height=dimens.TOOLBAR_HEIGHT,
         bgcolor=colors.bg,
@@ -62,25 +81,7 @@ def get_toolbar(
                 Row(
                     spacing=dimens.SPACE_XXS,
                     controls=[
-                        TextButton(
-                            content=Row(
-                                controls=[
-                                    Icon(
-                                        Icons.ADD,
-                                        size=dimens.SM_ICON_SIZE,
-                                        color=colors.accent,
-                                    ),
-                                    Text(
-                                        "New",
-                                        size=fonts.BODY_1_SIZE,
-                                        color=colors.accent,
-                                        weight=fonts.BOLD_FONT,
-                                    ),
-                                ],
-                                spacing=dimens.SPACE_XXS,
-                            ),
-                            on_click=on_click_new_btn,
-                        ),
+                        new_btn,
                         IconButton(
                             icon=Icons.SETTINGS_OUTLINED,
                             icon_size=dimens.ICON_SIZE,
@@ -121,6 +122,7 @@ def get_toolbar(
             ],
         ),
     )
+    return toolbar, new_btn
 
 
 class MainMenuItemsHandler:
@@ -264,19 +266,26 @@ class HomeScreen(TView, Container):
         )
 
         # Toolbar (slim, no title — view heading is the title)
-        self.toolbar = get_toolbar(
+        self.toolbar, self._new_btn = get_toolbar(
             on_click_new_btn=self.on_click_add_new,
             on_click_profile_btn=self.on_click_profile,
             on_view_settings_clicked=self.on_view_settings_clicked,
         )
+        self._update_new_btn_visibility()
 
     def _on_sidebar_item_selected(self, item: views.NavigationMenuItem):
         """Called when the user clicks a sidebar nav item."""
         self._selected_flat_index = self._all_items.index(item)
         self.destination_view = item.destination
         self.destination_content_container.content = self.destination_view
+        self._update_new_btn_visibility()
         self._update_status_bar_for_view(item.label)
         self.update_self()
+
+    def _update_new_btn_visibility(self):
+        """Show the '+ New' button only for views that support it."""
+        item = self._all_items[self._selected_flat_index]
+        self._new_btn.visible = bool(item.on_new_intent or item.on_new_screen_route)
 
     # ── Action buttons ────────────────────────────────────────
     def on_click_add_new(self, e):

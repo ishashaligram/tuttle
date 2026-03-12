@@ -376,7 +376,9 @@ class DashboardView(TView, Column):
         for m in months:
             rev = float(m["revenue"])
             if rev > 0:
-                label = m["month"][5:]  # "YYYY-MM" → "MM"
+                # "YYYY-MM" → "MM\n'YY"
+                year, mon = m["month"].split("-")
+                label = f"{mon}\n'{year[2:]}"
                 bar_data.append((label, rev, False))
 
         # Forecast
@@ -387,9 +389,10 @@ class DashboardView(TView, Column):
             for _, row in forecast_rows.iterrows():
                 month_dt = row["month"]
                 if hasattr(month_dt, "strftime"):
-                    label = month_dt.strftime("%m") + "*"
+                    label = month_dt.strftime("%m") + "*\n'" + month_dt.strftime("%y")
                 else:
-                    label = str(month_dt)[5:7] + "*"
+                    s = str(month_dt)
+                    label = s[5:7] + "*\n'" + s[2:4]
                 bar_data.append((label, float(row["revenue"]), True))
 
         if not bar_data:

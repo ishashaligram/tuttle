@@ -81,6 +81,14 @@ dist: clean ## builds source and wheel package
 	uv build
 	ls -l dist
 
+pack: clean-build ## build the app bundle with flet pack
+	uv run python scripts/pack_app.py
+
+test-bundle: ## smoke-test the packaged app bundle (build first with `make pack`)
+	uv run python scripts/test_app_bundle.py
+
+pack-and-test: pack test-bundle ## build and smoke-test the app bundle
+
 install: ## install the package with uv
 	uv sync
 

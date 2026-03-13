@@ -83,7 +83,7 @@ def run_migrations(db_url: str) -> None:
             logger.debug(f"Database is already at head revision ({head})")
             return
 
-        logger.info(f"Running migrations: {current} → {head}")
+        logger.info(f"Running migrations: {current} -> {head}")
         command.upgrade(cfg, "head")
         logger.info("Migrations completed successfully")
 

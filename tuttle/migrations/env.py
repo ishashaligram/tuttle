@@ -37,7 +37,7 @@ config = context.config
 
 # Interpret the config file for Python logging, if present
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    fileConfig(config.config_file_name, encoding="utf-8")
 
 # The target metadata for autogenerate support
 target_metadata = SQLModel.metadata

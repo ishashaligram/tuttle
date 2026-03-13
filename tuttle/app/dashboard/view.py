@@ -4,9 +4,15 @@ Renders KPI cards, revenue bar charts, project budget progress bars,
 and financial goal tracking using only Flet controls (no browser).
 """
 
+import threading
 from decimal import Decimal
 
+import flet_charts as fch
 from flet import (
+    Border,
+    BorderRadius,
+    BorderSide,
+    Colors,
     Column,
     Container,
     CrossAxisAlignment,
@@ -18,7 +24,6 @@ from flet import (
     Row,
     ScrollMode,
     Text,
-    TextAlign,
     TextStyle,
 )
 
@@ -82,59 +87,7 @@ class _KPICard(Container):
         )
 
 
-# ── Revenue Bar (native) ─────────────────────────────────────
-
-
-_BAR_CHART_HEIGHT = 160
-
-
-class _VerticalBar(Column):
-    """A single vertical bar in the revenue chart."""
-
-    def __init__(
-        self, label: str, value: float, max_value: float, is_forecast: bool = False
-    ):
-        ratio = min(value / max_value, 1.0) if max_value > 0 else 0
-        bar_height = max(ratio * _BAR_CHART_HEIGHT, 2) if ratio > 0 else 0
-        empty_height = _BAR_CHART_HEIGHT - bar_height
-        bar_color = colors.accent if not is_forecast else colors.accent_muted
-        value_text = fmt_currency(value) if value > 0 else ""
-
-        super().__init__(
-            expand=True,
-            horizontal_alignment=CrossAxisAlignment.CENTER,
-            spacing=0,
-            controls=[
-                # Value label above bar
-                Text(
-                    value_text,
-                    size=fonts.CAPTION_SIZE - 1,
-                    color=colors.text_muted if is_forecast else colors.text_secondary,
-                    text_align=TextAlign.CENTER,
-                ),
-                # Empty space above bar
-                Container(height=empty_height),
-                # The bar itself
-                Container(
-                    height=bar_height,
-                    bgcolor=bar_color,
-                    border_radius=dimens.RADIUS_SM,
-                    expand=True,
-                ),
-                # Month label below bar
-                Container(
-                    padding=Padding.only(top=dimens.SPACE_XXS),
-                    content=Text(
-                        label,
-                        size=fonts.CAPTION_SIZE,
-                        color=colors.text_muted
-                        if is_forecast
-                        else colors.text_secondary,
-                        text_align=TextAlign.CENTER,
-                    ),
-                ),
-            ],
-        )
+_BAR_CHART_HEIGHT = 260
 
 
 # ── Project Budget Row ────────────────────────────────────────
@@ -283,9 +236,13 @@ class DashboardView(TView, Column):
             self._load_data()
 
     def _load_data(self):
-        """Fetch all dashboard data and rebuild controls."""
+        """Kick off data loading in a background thread to keep the UI responsive."""
+        threading.Thread(target=self._load_data_sync, daemon=True).start()
+
+    def _load_data_sync(self):
+        """Fetch all dashboard data and rebuild controls (runs off-UI-thread)."""
         self._load_kpis()
-        self._load_revenue_chart()
+        self._load_monthly_chart()
         self._load_project_budgets()
         self._load_goals()
         self.update_self()
@@ -379,64 +336,161 @@ class DashboardView(TView, Column):
 
     # ── Revenue chart ─────────────────────────────────────────
 
-    def _load_revenue_chart(self):
-        self._revenue_section.controls.clear()
+    def _build_chart_legend_chip(self, label: str, color: str) -> Container:
+        return Container(
+            bgcolor=colors.bg_input,
+            border_radius=dimens.RADIUS_PILL,
+            padding=Padding.symmetric(
+                horizontal=dimens.SPACE_SM, vertical=dimens.SPACE_XXS
+            ),
+            content=Row(
+                spacing=dimens.SPACE_XXS,
+                controls=[
+                    Container(
+                        width=8,
+                        height=8,
+                        bgcolor=color,
+                        border_radius=dimens.RADIUS_PILL,
+                    ),
+                    Text(
+                        label,
+                        size=fonts.CAPTION_SIZE,
+                        color=colors.text_secondary,
+                    ),
+                ],
+            ),
+        )
 
-        result = self.intent.get_monthly_revenue(n_months=12)
+    def _load_monthly_chart(self):
+        self._revenue_section.controls.clear()
+        result = self.intent.get_monthly_chart_data(n_months=12)
         if not result.was_intent_successful or not result.data:
             return
 
-        months = result.data
-        if not months:
+        revenue_by_month = {m["month"]: m for m in result.data["revenue"]}
+        spendable_by_month = {m["month"]: m for m in result.data["spendable"]}
+        month_keys = sorted(
+            set(revenue_by_month.keys()) & set(spendable_by_month.keys())
+        )
+        if not month_keys:
             return
 
-        # Collect all bar data (history + forecast) to compute a shared max
-        bar_data = []
-        for m in months:
-            rev = float(m["revenue"])
-            if rev > 0:
-                # "YYYY-MM" → "MM\n'YY"
-                year, mon = m["month"].split("-")
-                label = f"{mon}\n'{year[2:]}"
-                bar_data.append((label, rev, False))
+        groups = []
+        bottom_labels = []
+        max_val = 0.0
+        for idx, mk in enumerate(month_keys):
+            y, m = mk.split("-")
+            label = f"{m}/{y[2:]}"
+            rev = float(revenue_by_month[mk]["revenue"])
+            sp = float(spendable_by_month[mk]["spendable"])
+            max_val = max(max_val, abs(rev), abs(sp))
 
-        # Forecast
-        forecast_result = self.intent.get_revenue_curve(forecast_months=6)
-        if forecast_result.was_intent_successful and forecast_result.data is not None:
-            df = forecast_result.data
-            forecast_rows = df[df["is_forecast"].eq(True)]
-            for _, row in forecast_rows.iterrows():
-                month_dt = row["month"]
-                if hasattr(month_dt, "strftime"):
-                    label = month_dt.strftime("%m") + "*\n'" + month_dt.strftime("%y")
-                else:
-                    s = str(month_dt)
-                    label = s[5:7] + "*\n'" + s[2:4]
-                bar_data.append((label, float(row["revenue"]), True))
+            sp_color = colors.success if sp >= 0 else colors.danger
+            groups.append(
+                fch.BarChartGroup(
+                    x=idx,
+                    rods=[
+                        fch.BarChartRod(
+                            from_y=0,
+                            to_y=rev,
+                            width=16,
+                            color=colors.accent,
+                            tooltip=fch.BarChartRodTooltip(
+                                f"Revenue: {fmt_currency(rev)}",
+                                text_style=TextStyle(color=Colors.WHITE, size=13),
+                            ),
+                            border_radius=2,
+                        ),
+                        fch.BarChartRod(
+                            from_y=0,
+                            to_y=sp,
+                            width=16,
+                            color=sp_color,
+                            tooltip=fch.BarChartRodTooltip(
+                                f"Spendable: {fmt_currency(sp)}",
+                                text_style=TextStyle(color=Colors.WHITE, size=13),
+                            ),
+                            border_radius=2,
+                        ),
+                    ],
+                )
+            )
+            bottom_labels.append(
+                fch.ChartAxisLabel(
+                    value=idx,
+                    label=Container(
+                        Text(
+                            label, size=fonts.CAPTION_SIZE, color=colors.text_secondary
+                        ),
+                        padding=Padding.only(top=4),
+                    ),
+                )
+            )
 
-        if not bar_data:
-            return
-
-        max_val = max(v for _, v, _ in bar_data)
-        if max_val == 0:
-            max_val = 1
-
-        bars = [
-            _VerticalBar(label, value, max_val, is_forecast=fc)
-            for label, value, fc in bar_data
-        ]
+        chart = fch.BarChart(
+            expand=True,
+            height=_BAR_CHART_HEIGHT,
+            interactive=True,
+            max_y=max_val * 1.1 if max_val > 0 else 100,
+            min_y=0,
+            groups=groups,
+            group_spacing=8,
+            tooltip=fch.BarChartTooltip(
+                bgcolor=Colors.with_opacity(0.9, Colors.GREY_900),
+                border_radius=BorderRadius.all(8),
+                padding=Padding.symmetric(horizontal=12, vertical=8),
+            ),
+            border=Border(
+                bottom=BorderSide(width=1, color=colors.border),
+                left=BorderSide(width=1, color=colors.border),
+            ),
+            horizontal_grid_lines=fch.ChartGridLines(
+                color=colors.border, width=0.5, dash_pattern=[4, 4]
+            ),
+            left_axis=fch.ChartAxis(label_size=50),
+            bottom_axis=fch.ChartAxis(label_size=30, labels=bottom_labels),
+        )
 
         self._revenue_section.controls = [
-            _section_header("Monthly Revenue", Icons.BAR_CHART),
+            Container(
+                padding=Padding.only(top=dimens.SPACE_MD, bottom=dimens.SPACE_XS),
+                content=Row(
+                    alignment=MainAxisAlignment.SPACE_BETWEEN,
+                    vertical_alignment=CrossAxisAlignment.CENTER,
+                    controls=[
+                        Row(
+                            spacing=dimens.SPACE_XS,
+                            controls=[
+                                Icon(
+                                    Icons.BAR_CHART,
+                                    size=dimens.MD_ICON_SIZE,
+                                    color=colors.text_secondary,
+                                ),
+                                Text(
+                                    "Monthly Revenue vs Spendable Income (Est.)",
+                                    size=fonts.HEADLINE_4_SIZE,
+                                    color=colors.text_primary,
+                                    weight=fonts.BOLD_FONT,
+                                ),
+                            ],
+                        ),
+                        Row(
+                            spacing=dimens.SPACE_XXS,
+                            controls=[
+                                self._build_chart_legend_chip("Revenue", colors.accent),
+                                self._build_chart_legend_chip(
+                                    "Spendable", colors.success
+                                ),
+                            ],
+                        ),
+                    ],
+                ),
+            ),
             Container(
                 bgcolor=colors.bg_surface,
                 border_radius=dimens.RADIUS_LG,
                 padding=Padding.all(dimens.SPACE_STD),
-                content=Row(
-                    spacing=dimens.SPACE_XXS,
-                    vertical_alignment=CrossAxisAlignment.END,
-                    controls=list(bars),
-                ),
+                content=chart,
             ),
         ]
 

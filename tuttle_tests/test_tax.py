@@ -13,6 +13,7 @@ from tuttle.tax_reserves import (
     compute_vat_reserves,
     quarterly_vat_breakdown,
 )
+from tuttle.kpi import monthly_spendable_breakdown
 from tuttle.model import (
     Address,
     Client,
@@ -343,6 +344,24 @@ class TestSpendableIncome:
         result = compute_spendable_income(invoices, "Germany")
         # Only this year's invoice should count
         assert result.gross_revenue_ytd == invoices[1].total
+
+    def test_monthly_spendable_breakdown_includes_vat_subtraction(self):
+        today = datetime.date.today()
+        invoices = [
+            _make_invoice(today.replace(day=1), [(20, 100, 0.19)]),
+        ]
+        monthly = monthly_spendable_breakdown(invoices, country="Germany", n_months=2)
+        this_month = [m for m in monthly if m["month"] == today.strftime("%Y-%m")][0]
+        assert this_month["gross_revenue"] > 0
+        assert this_month["vat_due"] > 0
+        assert (
+            this_month["net_revenue"]
+            == this_month["gross_revenue"] - this_month["vat_due"]
+        )
+        assert (
+            this_month["spendable"]
+            == this_month["net_revenue"] - this_month["income_tax_true_up"]
+        )
 
 
 # ── Quarterly VAT breakdown ──────────────────────────────────

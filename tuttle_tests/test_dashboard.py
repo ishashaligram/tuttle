@@ -25,7 +25,12 @@ from tuttle.forecasting import (
     revenue_history,
     revenue_curve,
 )
-from tuttle.kpi import compute_kpis, monthly_revenue_breakdown, project_budget_status
+from tuttle.kpi import (
+    compute_kpis,
+    monthly_revenue_breakdown,
+    monthly_spendable_breakdown,
+    project_budget_status,
+)
 
 
 # ── Fixtures ──────────────────────────────────────────────────
@@ -287,6 +292,47 @@ class TestMonthlyRevenueBreakdown:
         assert isinstance(result, list)
         total = sum(float(m["revenue"]) for m in result)
         assert total > 0
+
+
+class TestMonthlySpendableBreakdown:
+    def test_with_invoices(self, paid_invoice):
+        result = monthly_spendable_breakdown(
+            [paid_invoice], country="Germany", n_months=3
+        )
+        assert isinstance(result, list)
+        assert len(result) > 0
+        for month in result:
+            assert month["net_revenue"] == month["gross_revenue"] - month["vat_due"]
+            assert (
+                month["spendable"] == month["net_revenue"] - month["income_tax_true_up"]
+            )
+
+    def test_empty_invoices(self):
+        result = monthly_spendable_breakdown([], country="Germany", n_months=3)
+        assert isinstance(result, list)
+        assert len(result) > 0
+        for month in result:
+            assert month["gross_revenue"] == 0
+            assert month["vat_due"] == 0
+            assert month["net_revenue"] == 0
+
+    def test_true_up_deltas_reconcile(self, paid_invoice, unpaid_invoice):
+        today = datetime.date.today()
+        paid_invoice.date = today.replace(day=1)
+        unpaid_invoice.date = (
+            today.replace(day=1) - datetime.timedelta(days=32)
+        ).replace(day=1)
+        result = monthly_spendable_breakdown(
+            [paid_invoice, unpaid_invoice],
+            country="Germany",
+            n_months=4,
+        )
+        total_true_up = sum(
+            month["income_tax_true_up"]
+            for month in result
+            if month["month"].startswith(str(today.year))
+        )
+        assert total_true_up >= 0
 
 
 class TestProjectBudgetStatus:

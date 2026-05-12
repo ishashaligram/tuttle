@@ -1,12 +1,13 @@
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import {
   Users, Plus, Trash2, Save, X, Mail, Building2, MapPin, Search,
+  FileUp, Sparkles, Check, CheckCheck, Loader2,
 } from "lucide-react";
 import { rpc } from "../../api/rpc";
 import { str, entity as subEntity, fullName, initials, displayName } from "../../api/entity";
 import type { Entity } from "../../api/types";
 
-type Mode = "view" | "edit" | "create";
+type Mode = "view" | "edit" | "create" | "import";
 
 export function ContactsView() {
   const [contacts, setContacts] = useState<Entity[]>([]);
@@ -14,6 +15,9 @@ export function ContactsView() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [mode, setMode] = useState<Mode>("view");
+  const [parsedContacts, setParsedContacts] = useState<ParsedContact[]>([]);
+  const [parsing, setParsing] = useState(false);
+  const [parseError, setParseError] = useState<string | null>(null);
   const selectedIdRef = useRef<number | null>(null);
 
   useEffect(() => { selectedIdRef.current = selected?.id ?? null; }, [selected]);
@@ -36,6 +40,13 @@ export function ContactsView() {
   function startCreate() {
     setSelected(null);
     setMode("create");
+  }
+
+  function startImport() {
+    setSelected(null);
+    setParsedContacts([]);
+    setParseError(null);
+    setMode("import");
   }
 
   function selectContact(c: Entity) {
@@ -78,6 +89,61 @@ export function ContactsView() {
     }
   }
 
+  async function handleFileImport(file: File) {
+    setParsing(true);
+    setParseError(null);
+    setParsedContacts([]);
+    try {
+      const buffer = await file.arrayBuffer();
+      const base64 = btoa(
+        new Uint8Array(buffer).reduce((data, byte) => data + String.fromCharCode(byte), "")
+      );
+      const res = await rpc<ParsedContact[]>("llm.parse_document", {
+        file_base64: base64,
+        file_name: file.name,
+        entity_type: "contact",
+      });
+      if (res.ok && res.data) {
+        setParsedContacts(res.data);
+        if (res.data.length === 0) {
+          setParseError("No contacts found in the document.");
+        }
+      } else {
+        setParseError(res.error || "Failed to parse document.");
+      }
+    } catch (err) {
+      setParseError(String(err));
+    }
+    setParsing(false);
+  }
+
+  async function acceptContact(parsed: ParsedContact) {
+    const res = await rpc("contacts.save", { contact: parsed });
+    if (res.ok) {
+      setParsedContacts((prev) => prev.filter((c) => c !== parsed));
+      await load();
+    } else {
+      setParseError(res.error || "Failed to save contact.");
+    }
+  }
+
+  async function acceptAll() {
+    for (const c of parsedContacts) {
+      await rpc("contacts.save", { contact: c });
+    }
+    setParsedContacts([]);
+    await load();
+    setMode("view");
+  }
+
+  function discardContact(parsed: ParsedContact) {
+    setParsedContacts((prev) => prev.filter((c) => c !== parsed));
+  }
+
+  function updateParsedContact(index: number, updated: ParsedContact) {
+    setParsedContacts((prev) => prev.map((c, i) => i === index ? updated : c));
+  }
+
   const filtered = contacts.filter((c) => {
     if (!search) return true;
     const q = search.toLowerCase();
@@ -96,6 +162,7 @@ export function ContactsView() {
       <div className="flex items-center gap-2 px-4 py-2 shrink-0 border-b border-border-subtle">
         <h2 className="text-sm font-semibold">Contacts</h2>
         <ToolbarButton icon={<Plus size={15} />} onClick={startCreate} />
+        <ToolbarButton icon={<FileUp size={15} />} label="Import" onClick={startImport} />
         <div className="relative ml-auto">
           <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted" />
           <input type="text" placeholder="Search…" value={search}
@@ -112,7 +179,7 @@ export function ContactsView() {
               ? <div className="p-4 text-sm text-center text-tertiary">{search ? "No matches." : "No contacts."}</div>
               : filtered.map((c) => (
                 <ContactRow key={c.id} contact={c}
-                  isSelected={selected?.id === c.id && mode !== "create"}
+                  isSelected={selected?.id === c.id && mode !== "create" && mode !== "import"}
                   onSelect={() => selectContact(c)} />
               ))}
           </div>
@@ -121,9 +188,21 @@ export function ContactsView() {
           </div>
         </div>
 
-        {/* Detail / Form */}
+        {/* Detail / Form / Import */}
         <div className="flex-1 overflow-y-auto">
-          {mode === "create" ? (
+          {mode === "import" ? (
+            <DocumentImportPanel
+              parsing={parsing}
+              parseError={parseError}
+              parsedContacts={parsedContacts}
+              onFileSelected={handleFileImport}
+              onAccept={acceptContact}
+              onAcceptAll={acceptAll}
+              onDiscard={discardContact}
+              onUpdate={updateParsedContact}
+              onClose={() => setMode("view")}
+            />
+          ) : mode === "create" ? (
             <ContactForm onSave={handleSave} onCancel={() => { setMode("view"); }} />
           ) : mode === "edit" && selected ? (
             <ContactForm contact={selected} onSave={handleSave}
@@ -379,5 +458,231 @@ function ToolbarButton({ icon, label, onClick }: {
       {icon}
       {label && <span>{label}</span>}
     </button>
+  );
+}
+
+/* ---------- AI Document Import ---------- */
+
+interface ParsedContact {
+  first_name: string;
+  last_name: string;
+  company: string;
+  email: string;
+  address: {
+    street: string;
+    number: string;
+    city: string;
+    postal_code: string;
+    country: string;
+  };
+}
+
+const ACCEPT_EXTENSIONS = [".pdf", ".txt", ".md", ".text"];
+
+function DocumentImportPanel({ parsing, parseError, parsedContacts, onFileSelected, onAccept, onAcceptAll, onDiscard, onUpdate, onClose }: {
+  parsing: boolean;
+  parseError: string | null;
+  parsedContacts: ParsedContact[];
+  onFileSelected: (file: File) => void;
+  onAccept: (c: ParsedContact) => void;
+  onAcceptAll: () => void;
+  onDiscard: (c: ParsedContact) => void;
+  onUpdate: (index: number, c: ParsedContact) => void;
+  onClose: () => void;
+}) {
+  const [dragOver, setDragOver] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setDragOver(false);
+    const file = e.dataTransfer.files[0];
+    if (file && isAcceptedFile(file.name)) {
+      onFileSelected(file);
+    }
+  }, [onFileSelected]);
+
+  function isAcceptedFile(name: string) {
+    const lower = name.toLowerCase();
+    return ACCEPT_EXTENSIONS.some((ext) => lower.endsWith(ext));
+  }
+
+  function handleFileInput(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (file) onFileSelected(file);
+  }
+
+  const showDropzone = parsedContacts.length === 0 && !parsing;
+
+  return (
+    <div className="p-5 space-y-5">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Sparkles size={18} className="text-fuchsia-400" />
+          <h2 className="text-lg font-semibold">Import from Document</h2>
+        </div>
+        <button onClick={onClose}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm text-secondary hover:text-primary hover:bg-bg-hover transition-colors">
+          <X size={14} /> Close
+        </button>
+      </div>
+
+      {showDropzone && (
+        <div
+          onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+          onDragLeave={() => setDragOver(false)}
+          onDrop={handleDrop}
+          onClick={() => fileInputRef.current?.click()}
+          className={`flex flex-col items-center justify-center gap-3 p-10 rounded-xl border-2 border-dashed cursor-pointer transition-colors
+            ${dragOver ? "border-fuchsia-400 bg-fuchsia-500/5" : "border-border-subtle hover:border-fuchsia-400/50 hover:bg-fuchsia-500/5"}`}
+        >
+          <FileUp size={32} strokeWidth={1.4} className="text-fuchsia-400" />
+          <div className="text-center">
+            <p className="text-sm font-medium">Drop a document here</p>
+            <p className="text-xs text-tertiary mt-1">PDF, TXT, or Markdown — AI will extract contacts</p>
+          </div>
+          <input ref={fileInputRef} type="file" className="hidden"
+            accept=".pdf,.txt,.md,.text"
+            onChange={handleFileInput} />
+        </div>
+      )}
+
+      {parsing && (
+        <div className="flex items-center justify-center gap-3 py-10">
+          <Loader2 size={20} className="animate-spin text-fuchsia-400" />
+          <span className="text-sm text-secondary">Parsing document with AI…</span>
+        </div>
+      )}
+
+      {parseError && (
+        <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/30 text-sm text-red-400">
+          {parseError}
+        </div>
+      )}
+
+      {parsedContacts.length > 0 && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <p className="text-sm text-secondary">
+              <span className="font-medium text-fuchsia-400">{parsedContacts.length}</span> contact{parsedContacts.length !== 1 ? "s" : ""} found
+            </p>
+            <button onClick={onAcceptAll}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium text-fuchsia-400 hover:bg-fuchsia-500/10 border border-fuchsia-400/30 transition-colors">
+              <CheckCheck size={14} /> Accept All
+            </button>
+          </div>
+          {parsedContacts.map((c, i) => (
+            <ParsedContactCard key={i} contact={c}
+              onAccept={() => onAccept(c)}
+              onDiscard={() => onDiscard(c)}
+              onUpdate={(updated) => onUpdate(i, updated)}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ---------- Parsed Contact Approval Card ---------- */
+
+function contactIsValid(c: ParsedContact): { valid: boolean; missing: string[] } {
+  const missing: string[] = [];
+  if (!c.first_name.trim()) missing.push("First Name");
+  if (!c.last_name.trim()) missing.push("Last Name");
+  const addr = c.address;
+  const hasAddress = !!(addr.street || addr.number || addr.city || addr.postal_code || addr.country);
+  if (!hasAddress) missing.push("Address (at least one field)");
+  return { valid: missing.length === 0, missing };
+}
+
+function ParsedContactCard({ contact, onAccept, onDiscard, onUpdate }: {
+  contact: ParsedContact;
+  onAccept: () => void;
+  onDiscard: () => void;
+  onUpdate: (c: ParsedContact) => void;
+}) {
+  function updateField(field: keyof ParsedContact, value: string) {
+    onUpdate({ ...contact, [field]: value });
+  }
+
+  function updateAddr(field: string, value: string) {
+    onUpdate({ ...contact, address: { ...contact.address, [field]: value } });
+  }
+
+  const { valid, missing } = contactIsValid(contact);
+  const name = [contact.first_name, contact.last_name].filter(Boolean).join(" ") || contact.company || "Unknown";
+
+  return (
+    <div className="rounded-xl border-2 border-fuchsia-400/40 bg-fuchsia-500/5 p-4 space-y-3">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Sparkles size={14} className="text-fuchsia-400" />
+          <span className="text-sm font-semibold">{name}</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <button onClick={onDiscard}
+            className="flex items-center gap-1 px-2 py-1 rounded text-xs text-secondary hover:text-red-400 hover:bg-red-500/10 transition-colors"
+            title="Discard">
+            <Trash2 size={12} /> Discard
+          </button>
+          <button onClick={valid ? onAccept : undefined}
+            disabled={!valid}
+            className={`flex items-center gap-1 px-2 py-1 rounded text-xs font-medium border transition-colors ${
+              valid
+                ? "text-fuchsia-400 hover:bg-fuchsia-500/10 border-fuchsia-400/30"
+                : "text-muted border-border-subtle cursor-not-allowed opacity-50"
+            }`}
+            title={valid ? "Accept and save" : `Missing: ${missing.join(", ")}`}>
+            <Check size={12} /> Accept
+          </button>
+        </div>
+      </div>
+
+      {!valid && (
+        <p className="text-xs text-amber-400">
+          Required: {missing.join(", ")}
+        </p>
+      )}
+
+      <div className="grid grid-cols-2 gap-2">
+        <AiField label="First Name" value={contact.first_name} onChange={(v) => updateField("first_name", v)} required missing={!contact.first_name.trim()} />
+        <AiField label="Last Name" value={contact.last_name} onChange={(v) => updateField("last_name", v)} required missing={!contact.last_name.trim()} />
+        <AiField label="Company" value={contact.company} onChange={(v) => updateField("company", v)} />
+        <AiField label="Email" value={contact.email} onChange={(v) => updateField("email", v)} />
+      </div>
+
+      <div className="grid grid-cols-2 gap-2">
+        <AiField label="Street" value={contact.address.street} onChange={(v) => updateAddr("street", v)} addressRequired={!contactHasAddress(contact)} />
+        <AiField label="Number" value={contact.address.number} onChange={(v) => updateAddr("number", v)} addressRequired={!contactHasAddress(contact)} />
+        <AiField label="City" value={contact.address.city} onChange={(v) => updateAddr("city", v)} addressRequired={!contactHasAddress(contact)} />
+        <AiField label="Postal Code" value={contact.address.postal_code} onChange={(v) => updateAddr("postal_code", v)} addressRequired={!contactHasAddress(contact)} />
+        <AiField label="Country" value={contact.address.country} onChange={(v) => updateAddr("country", v)} addressRequired={!contactHasAddress(contact)} />
+      </div>
+    </div>
+  );
+}
+
+function contactHasAddress(c: ParsedContact): boolean {
+  const a = c.address;
+  return !!(a.street || a.number || a.city || a.postal_code || a.country);
+}
+
+function AiField({ label, value, onChange, required, missing, addressRequired }: {
+  label: string; value: string; onChange: (v: string) => void;
+  required?: boolean; missing?: boolean; addressRequired?: boolean;
+}) {
+  const showWarning = (required && missing) || addressRequired;
+  return (
+    <div>
+      <label className="block text-xs text-fuchsia-300/70 mb-0.5">
+        {label}{required && <span className="text-amber-400 ml-0.5">*</span>}
+      </label>
+      <input type="text" value={value} onChange={(e) => onChange(e.target.value)}
+        className={`w-full px-2.5 py-1.5 rounded-md text-sm bg-bg-card text-primary outline-none
+          focus:border-fuchsia-400 transition-colors placeholder:text-muted border ${
+          showWarning ? "border-amber-400/60" : "border-fuchsia-400/30"
+        }`} />
+    </div>
   );
 }

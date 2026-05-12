@@ -1,6 +1,7 @@
 import {
   LayoutDashboard, CalendarDays, PieChart, Banknote,
   FolderKanban, FileSignature, Building2, Users, Clock, FileText,
+  Settings,
   type LucideIcon,
 } from "lucide-react";
 
@@ -30,6 +31,12 @@ const SECTIONS: { label: string; items: SidebarItem[] }[] = [
     items: [
       { id: "timetracking", label: "Time Tracking", icon: Clock },
       { id: "invoicing", label: "Invoicing", icon: FileText },
+    ],
+  },
+  {
+    label: "",
+    items: [
+      { id: "settings", label: "Settings", icon: Settings },
     ],
   },
 ];

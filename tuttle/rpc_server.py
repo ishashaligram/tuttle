@@ -119,6 +119,62 @@ def _unwrap_intent_result(result) -> Dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Entity serialisation helpers (include nested relations)
+# ---------------------------------------------------------------------------
+
+
+def _client_to_rpc_dict(client) -> Dict[str, Any]:
+    """Serialise a Client with nested invoicing_contact and address."""
+    d = _serialise(client)
+    ic = client.invoicing_contact
+    if ic:
+        icd = _serialise(ic)
+        if ic.address:
+            icd["address"] = _serialise(ic.address)
+        d["invoicing_contact"] = icd
+    return d
+
+
+def _contract_to_rpc_dict(contract, include_relations: bool = True) -> Dict[str, Any]:
+    """Serialise a Contract with nested client and relationship counts."""
+    d = _serialise(contract)
+    if contract.client:
+        d["client"] = _serialise(contract.client)
+    if include_relations:
+        d["projects"] = [
+            {"id": p.id, "title": p.title} for p in (contract.projects or [])
+        ]
+        d["invoices"] = [{"id": inv.id} for inv in (contract.invoices or [])]
+    return d
+
+
+def _project_to_rpc_dict(project) -> Dict[str, Any]:
+    """Serialise a Project with nested contract (and its client), no circular refs."""
+    d = _serialise(project)
+    if project.contract:
+        d["contract"] = _contract_to_rpc_dict(project.contract, include_relations=False)
+    return d
+
+
+def _patch_scalars_from_rpc(instance: Any, updates: Dict[str, Any], skip: set) -> None:
+    """Apply JSON payload fields onto a persisted SQLModel row (in-place).
+
+    Handles date coercion for *_date fields and empty-string-to-None for optional dates.
+    """
+    for k, v in updates.items():
+        if k in skip or k.startswith("_"):
+            continue
+        if v == "" and k.endswith("_date"):
+            v = None
+        if isinstance(v, str) and k.endswith("_date") and v and len(v) >= 10:
+            try:
+                v = datetime.date.fromisoformat(v[:10])
+            except ValueError:
+                pass
+        setattr(instance, k, v)
+
+
+# ---------------------------------------------------------------------------
 # Method dispatch table
 # ---------------------------------------------------------------------------
 
@@ -213,16 +269,95 @@ def _dispatch(method: str, params: Dict[str, Any]) -> Any:
 
     # -- Clients ------------------------------------------------------------
     if method == "clients.get_all":
-        return _unwrap_intent_result(_get_intent("clients").get_all())
+        result = _get_intent("clients").get_all()
+        if result.was_intent_successful and result.data:
+            enriched = [_client_to_rpc_dict(c) for c in result.data]
+            return {"ok": True, "data": enriched, "error": None}
+        return _unwrap_intent_result(result)
+    if method == "clients.get_by_id":
+        result = _get_intent("clients").get_by_id(params["id"])
+        if result.was_intent_successful and result.data:
+            return {"ok": True, "data": _client_to_rpc_dict(result.data), "error": None}
+        return _unwrap_intent_result(result)
     if method == "clients.get_all_contacts":
         contacts_map = _get_intent("clients").get_all_contacts_as_map()
         return {"ok": True, "data": _serialise(contacts_map), "error": None}
     if method == "clients.save":
         from tuttle.model import Client, Contact, Address
 
-        data = params["client"]
-        contact_data = data.pop("invoicing_contact", {}) or {}
-        addr_data = contact_data.pop("address", {}) or {}
+        raw = params["client"]
+        data = dict(raw)
+        contact_data = dict(data.pop("invoicing_contact", {}) or {})
+        addr_data = dict(contact_data.pop("address", {}) or {})
+        client_id = data.get("id")
+        intent = _get_intent("clients")
+        contacts_intent = _get_intent("contacts")
+
+        if client_id:
+            existing = intent.get_by_id(client_id)
+            if not existing.was_intent_successful or not existing.data:
+                return {"ok": False, "data": None, "error": "Client not found"}
+            client = existing.data
+            for k, v in data.items():
+                if not k.startswith("_") and k not in (
+                    "id",
+                    "contracts",
+                    "invoicing_contact_id",
+                    "invoicing_contact",
+                ):
+                    setattr(client, k, v)
+
+            contact_id = contact_data.get("id")
+            if contact_id:
+                cres = contacts_intent.get_by_id(contact_id)
+                if not cres.was_intent_successful or not cres.data:
+                    return {
+                        "ok": False,
+                        "data": None,
+                        "error": "Invoicing contact not found",
+                    }
+                contact = cres.data
+                for k, v in contact_data.items():
+                    if not k.startswith("_") and k not in (
+                        "id",
+                        "invoicing_contact_of",
+                        "address",
+                        "address_id",
+                    ):
+                        setattr(contact, k, v)
+                if contact.address:
+                    for k, v in addr_data.items():
+                        if not k.startswith("_") and k != "id":
+                            setattr(contact.address, k, v)
+                elif addr_data:
+                    contact.address = Address(
+                        **{
+                            k: v
+                            for k, v in addr_data.items()
+                            if k != "id" and not k.startswith("_")
+                        }
+                    )
+                client.invoicing_contact = contact
+            else:
+                address = Address(
+                    **{
+                        k: v
+                        for k, v in addr_data.items()
+                        if k != "id" and not k.startswith("_")
+                    }
+                )
+                contact = Contact(
+                    address=address,
+                    **{
+                        k: v
+                        for k, v in contact_data.items()
+                        if not k.startswith("_")
+                        and k not in ("invoicing_contact_of", "address_id")
+                    },
+                )
+                client.invoicing_contact = contact
+            return _unwrap_intent_result(intent.save_client(client))
+
         address = Address(
             **{
                 k: v
@@ -250,13 +385,26 @@ def _dispatch(method: str, params: Dict[str, Any]) -> Any:
                 if not k.startswith("_") and k not in ("contracts",)
             },
         )
-        return _unwrap_intent_result(_get_intent("clients").save_client(client))
+        return _unwrap_intent_result(intent.save_client(client))
     if method == "clients.delete":
         return _unwrap_intent_result(_get_intent("clients").delete(params["id"]))
 
     # -- Contracts ----------------------------------------------------------
     if method == "contracts.get_all":
-        return _unwrap_intent_result(_get_intent("contracts").get_all())
+        result = _get_intent("contracts").get_all()
+        if result.was_intent_successful and result.data:
+            enriched = [_contract_to_rpc_dict(c) for c in result.data]
+            return {"ok": True, "data": enriched, "error": None}
+        return _unwrap_intent_result(result)
+    if method == "contracts.get_by_id":
+        result = _get_intent("contracts").get_by_id(params["id"])
+        if result.was_intent_successful and result.data:
+            return {
+                "ok": True,
+                "data": _contract_to_rpc_dict(result.data),
+                "error": None,
+            }
+        return _unwrap_intent_result(result)
     if method == "contracts.get_all_clients":
         clients_map = _get_intent("contracts").get_all_clients_as_map()
         return {"ok": True, "data": _serialise(clients_map), "error": None}
@@ -266,14 +414,33 @@ def _dispatch(method: str, params: Dict[str, Any]) -> Any:
         from tuttle.model import Contract
 
         data = params["contract"]
-        client_id = data.get("client_id")
         clean = {
             k: v
             for k, v in data.items()
             if not k.startswith("_") and k not in ("client", "projects", "invoices")
         }
-        contract = Contract(**clean)
-        return _unwrap_intent_result(_get_intent("contracts").save_contract(contract))
+        contract_id = clean.get("id")
+        intent = _get_intent("contracts")
+        skip_patch = {"id", "client", "projects", "invoices"}
+
+        if contract_id:
+            res = intent.get_by_id(contract_id)
+            if not res.was_intent_successful or not res.data:
+                return {"ok": False, "data": None, "error": "Contract not found"}
+            contract = res.data
+            _patch_scalars_from_rpc(contract, clean, skip_patch)
+            return _unwrap_intent_result(intent.save_contract(contract))
+
+        new_data = {k: v for k, v in clean.items() if k != "id"}
+        for k in list(new_data.keys()):
+            if k.endswith("_date") and isinstance(new_data[k], str) and new_data[k]:
+                try:
+                    new_data[k] = datetime.date.fromisoformat(new_data[k][:10])
+                except ValueError:
+                    pass
+            elif k.endswith("_date") and new_data[k] == "":
+                new_data[k] = None
+        return _unwrap_intent_result(intent.save_contract(Contract(**new_data)))
     if method == "contracts.delete":
         return _unwrap_intent_result(_get_intent("contracts").delete(params["id"]))
     if method == "contracts.toggle_completed":
@@ -286,7 +453,20 @@ def _dispatch(method: str, params: Dict[str, Any]) -> Any:
 
     # -- Projects -----------------------------------------------------------
     if method == "projects.get_all":
-        return _unwrap_intent_result(_get_intent("projects").get_all())
+        result = _get_intent("projects").get_all()
+        if result.was_intent_successful and result.data:
+            enriched = [_project_to_rpc_dict(p) for p in result.data]
+            return {"ok": True, "data": enriched, "error": None}
+        return _unwrap_intent_result(result)
+    if method == "projects.get_by_id":
+        result = _get_intent("projects").get_by_id(params["id"])
+        if result.was_intent_successful and result.data:
+            return {
+                "ok": True,
+                "data": _project_to_rpc_dict(result.data),
+                "error": None,
+            }
+        return _unwrap_intent_result(result)
     if method == "projects.get_all_clients":
         clients_map = _get_intent("projects").get_all_clients_as_map()
         return {"ok": True, "data": _serialise(clients_map), "error": None}
@@ -302,8 +482,28 @@ def _dispatch(method: str, params: Dict[str, Any]) -> Any:
             for k, v in data.items()
             if not k.startswith("_") and k not in ("contract", "timesheets", "invoices")
         }
-        project = Project(**clean)
-        return _unwrap_intent_result(_get_intent("projects").save_project(project))
+        project_id = clean.get("id")
+        intent = _get_intent("projects")
+        skip_patch = {"id", "contract", "timesheets", "invoices"}
+
+        if project_id:
+            res = intent.get_by_id(project_id)
+            if not res.was_intent_successful or not res.data:
+                return {"ok": False, "data": None, "error": "Project not found"}
+            project = res.data
+            _patch_scalars_from_rpc(project, clean, skip_patch)
+            return _unwrap_intent_result(intent.save_project(project))
+
+        new_data = {k: v for k, v in clean.items() if k != "id"}
+        for k in list(new_data.keys()):
+            if k.endswith("_date") and isinstance(new_data[k], str) and new_data[k]:
+                try:
+                    new_data[k] = datetime.date.fromisoformat(new_data[k][:10])
+                except ValueError:
+                    pass
+            elif k.endswith("_date") and new_data[k] == "":
+                new_data[k] = None
+        return _unwrap_intent_result(intent.save_project(Project(**new_data)))
     if method == "projects.delete":
         return _unwrap_intent_result(_get_intent("projects").delete(params["id"]))
     if method == "projects.toggle_completed":
@@ -462,6 +662,37 @@ def _dispatch(method: str, params: Dict[str, Any]) -> Any:
         return _unwrap_intent_result(
             _get_intent("timeline").get_timeline_events(category_filter=cat)
         )
+
+    # -- LLM ---------------------------------------------------------------
+    if method == "llm.get_config":
+        from tuttle.llm import load_config
+
+        config = load_config()
+        return {"ok": True, "data": config.model_dump(), "error": None}
+
+    if method == "llm.save_config":
+        from tuttle.llm import LLMConfig, save_config
+
+        config = LLMConfig(**params.get("config", {}))
+        saved = save_config(config)
+        return {"ok": True, "data": saved.model_dump(), "error": None}
+
+    if method == "llm.get_models":
+        from tuttle.llm import get_available_models
+
+        base_url = params.get("base_url", "http://localhost:11434")
+        models = get_available_models(base_url)
+        return {"ok": True, "data": models, "error": None}
+
+    if method == "llm.parse_document":
+        from tuttle.llm import parse_document, load_config as _load_llm
+
+        file_base64 = params["file_base64"]
+        file_name = params["file_name"]
+        entity_type = params.get("entity_type", "contact")
+        config = _load_llm()
+        items = parse_document(file_base64, file_name, entity_type, config)
+        return {"ok": True, "data": items, "error": None}
 
     # -- Demo ---------------------------------------------------------------
     if method == "demo.install":

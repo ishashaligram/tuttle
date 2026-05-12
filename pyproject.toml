@@ -41,6 +41,8 @@ dependencies = [
     "icloudpy",
     "alembic>=1.18.4",
     "flet-charts>=0.81.0",
+    "llama-index-core",
+    "llama-index-llms-ollama",
 ]
 
 [project.urls]

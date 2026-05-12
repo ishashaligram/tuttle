@@ -8,6 +8,7 @@ import { str, num, bool, list as entityList, formatDate, invoiceStatus } from ".
 import { StatusBadge } from "../shared/StatusBadge";
 import { ViewModeToggle } from "../shared/ViewModeToggle";
 import { KanbanBoard, useStageStore, type BoardColumn } from "../shared/KanbanBoard";
+import { useNavigation } from "../shared/NavigationContext";
 import type { Entity } from "../../api/types";
 
 const INVOICE_COLUMNS: BoardColumn[] = [
@@ -27,6 +28,7 @@ const FILTER_COLORS: Record<string, string> = {
 };
 
 export function InvoicingView() {
+  const { filter: navFilter } = useNavigation();
   const [invoices, setInvoices] = useState<Entity[]>([]);
   const [selected, setSelected] = useState<Entity | null>(null);
   const [loading, setLoading] = useState(true);
@@ -120,9 +122,11 @@ export function InvoicingView() {
             <div className="flex-1 overflow-y-auto">
               {filtered.length === 0
                 ? <div className="p-4 text-sm text-center text-tertiary">{search ? "No matches." : "No invoices."}</div>
-                : filtered.map((inv) => (
-                  <InvoiceRow key={inv.id} invoice={inv} isSelected={selected?.id === inv.id} onSelect={() => setSelected(inv)} />
-                ))}
+                : filtered.map((inv) => {
+                  const isSelected = selected?.id === inv.id;
+                  const isHighlighted = !isSelected && navFilter.contractId != null && num(inv, "contract_id") === navFilter.contractId;
+                  return <InvoiceRow key={inv.id} invoice={inv} isSelected={isSelected} isHighlighted={isHighlighted} onSelect={() => setSelected(inv)} />;
+                })}
             </div>
             <div className="px-4 py-2 text-xs text-tertiary border-t border-border-subtle">
               {filtered.length} invoice{filtered.length !== 1 ? "s" : ""}
@@ -151,11 +155,12 @@ export function InvoicingView() {
   );
 }
 
-function InvoiceRow({ invoice, isSelected, onSelect }: { invoice: Entity; isSelected: boolean; onSelect: () => void }) {
+function InvoiceRow({ invoice, isSelected, isHighlighted, onSelect }: { invoice: Entity; isSelected: boolean; isHighlighted?: boolean; onSelect: () => void }) {
   const status = invoiceStatus(invoice);
   return (
     <button onClick={onSelect}
-      className={`w-full text-left px-4 py-3 border-b border-border-subtle transition-colors ${isSelected ? "bg-bg-selected" : "hover:bg-bg-hover"}`}>
+      className={`w-full text-left px-4 py-3 border-b transition-colors
+        ${isSelected ? "bg-bg-selected border-border-subtle" : isHighlighted ? "bg-accent/10 border-accent/30" : "border-border-subtle hover:bg-bg-hover"}`}>
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2 min-w-0">
           <span className="text-sm font-medium">{str(invoice, "number") || "Draft"}</span>

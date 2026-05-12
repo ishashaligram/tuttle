@@ -255,7 +255,7 @@ export function SettingsView() {
             onClick={() => setTab(id)}
             className={`flex items-center gap-2 w-full px-3 py-2 rounded-md text-sm transition-colors ${
               tab === id
-                ? "bg-accent/10 text-accent font-medium"
+                ? "bg-accent/10 text-primary font-medium"
                 : "text-secondary hover:bg-bg-hover hover:text-primary"
             }`}
           >
@@ -368,7 +368,7 @@ export function SettingsView() {
           <button
             onClick={handleSaveProfile}
             disabled={profileSaving || !profile.name.trim()}
-            className="flex items-center gap-1.5 px-4 py-2 rounded-md text-sm font-medium bg-accent/10 text-accent hover:bg-accent/20 border border-accent/30 transition-colors disabled:opacity-40"
+            className="flex items-center gap-1.5 px-4 py-2 rounded-md text-sm font-medium bg-accent/10 text-primary hover:bg-accent/20 border border-accent/30 transition-colors disabled:opacity-40"
           >
             <Save size={14} />
             {profileSaving ? "Saving…" : "Save Profile"}
@@ -416,7 +416,7 @@ export function SettingsView() {
           <button
             onClick={handleSaveInvoicing}
             disabled={invoicingSaving}
-            className="flex items-center gap-1.5 px-4 py-2 rounded-md text-sm font-medium bg-accent/10 text-accent hover:bg-accent/20 border border-accent/30 transition-colors disabled:opacity-40"
+            className="flex items-center gap-1.5 px-4 py-2 rounded-md text-sm font-medium bg-accent/10 text-primary hover:bg-accent/20 border border-accent/30 transition-colors disabled:opacity-40"
           >
             <Save size={14} />
             {invoicingSaving ? "Saving…" : "Save Invoicing Preferences"}
@@ -521,7 +521,7 @@ export function SettingsView() {
           <button
             onClick={handleSaveLLM}
             disabled={saving || !config.model}
-            className="flex items-center gap-1.5 px-4 py-2 rounded-md text-sm font-medium bg-accent/10 text-accent hover:bg-accent/20 border border-accent/30 transition-colors disabled:opacity-40"
+            className="flex items-center gap-1.5 px-4 py-2 rounded-md text-sm font-medium bg-accent/10 text-primary hover:bg-accent/20 border border-accent/30 transition-colors disabled:opacity-40"
           >
             <Save size={14} />
             {saving ? "Saving…" : "Save LLM Settings"}

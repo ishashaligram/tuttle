@@ -90,7 +90,7 @@ export function Sidebar({
         {SECTIONS.map((section) => (
           <div key={section.label}>
             {!collapsed && (
-              <div className="px-2 pb-1 text-xs font-semibold uppercase tracking-widest text-accent">
+              <div className="px-2 pb-1 text-xs font-semibold uppercase tracking-widest text-tertiary">
                 {section.label}
               </div>
             )}
@@ -123,7 +123,7 @@ export function Sidebar({
           className="no-drag flex items-center gap-2.5 w-full px-3 py-2.5 text-sm transition-colors hover:bg-bg-hover cursor-default"
           title={activeUser?.name ?? "No user"}
         >
-          <span className="flex items-center justify-center w-7 h-7 rounded-full bg-accent/20 text-accent text-xs font-semibold shrink-0">
+          <span className="flex items-center justify-center w-7 h-7 rounded-full bg-bg-card text-primary text-xs font-semibold shrink-0">
             {initials}
           </span>
           {!collapsed && (
@@ -146,7 +146,7 @@ export function Sidebar({
                 <button
                   onClick={() => { onSwitchUser(u.db_file); setMenuOpen(false); }}
                   className={`flex-1 text-left px-3 py-1.5 text-sm truncate transition-colors
-                    ${u.db_file === activeUser?.db_file ? "text-accent font-medium" : "text-secondary hover:bg-bg-hover hover:text-primary"}`}
+                    ${u.db_file === activeUser?.db_file ? "text-primary font-medium" : "text-secondary hover:bg-bg-hover hover:text-primary"}`}
                 >
                   {u.name}
                   {u.is_demo && <span className="ml-1 text-[10px] text-muted">(demo)</span>}

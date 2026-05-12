@@ -3,6 +3,7 @@ declare global {
     tuttle: {
       rpc: (method: string, params?: Record<string, unknown>) => Promise<unknown>;
       readFile: (filePath: string) => Promise<{ ok: boolean; data: string | null }>;
+      platform: string;
     };
   }
 }

@@ -5,4 +5,5 @@ contextBridge.exposeInMainWorld("tuttle", {
     ipcRenderer.invoke("rpc", method, params || {}),
   readFile: (filePath) =>
     ipcRenderer.invoke("read-file", filePath),
+  platform: process.platform,
 });

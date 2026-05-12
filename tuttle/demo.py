@@ -500,31 +500,49 @@ def create_demo_user() -> User:
 
 
 def create_fake_calendar(project_list: List[Project]) -> ics.Calendar:
-    def random_datetime(start, end):
-        return start + timedelta(
-            seconds=random.randint(0, int((end - start).total_seconds()))
-        )
+    """Generate a realistic work calendar spanning the last ~3 months.
 
-    def random_duration():
-        return timedelta(hours=random.randint(1, 8))
-
+    Events land on weekdays during business hours (8–18), with varied
+    durations (1–6 h) and descriptive titles including the project tag.
+    """
     calendar = ics.Calendar()
+    today = datetime.date.today()
+    start_date = today - timedelta(days=90)
 
-    now = datetime.datetime.now()
-    month_ago = now - timedelta(days=730)
+    task_verbs = [
+        "Work on",
+        "Review",
+        "Planning",
+        "Development",
+        "Meeting",
+        "Testing",
+        "Documentation",
+        "Research",
+        "Sprint review",
+    ]
 
     for project in project_list:
-        for _ in range(random.randint(20, 40)):
-            # create a new event
-            event = ics.Event()
-            event.name = f"Meeting for {project.tag}"
-
-            # set the event's begin and end datetime
-            event.begin = random_datetime(month_ago, now)
-            event.end = event.begin + random_duration()
-
-            # add to calendar.events
-            calendar.events.add(event)
+        current = start_date
+        while current <= today:
+            if current.weekday() < 5:  # weekdays only
+                if random.random() < 0.45:  # ~45 % chance per weekday
+                    start_hour = random.choice([8, 9, 10, 13, 14, 15])
+                    duration_h = random.choice([1, 2, 2, 3, 3, 4, 6])
+                    begin = datetime.datetime(
+                        current.year,
+                        current.month,
+                        current.day,
+                        start_hour,
+                        random.choice([0, 15, 30]),
+                    )
+                    event = ics.Event()
+                    verb = random.choice(task_verbs)
+                    event.name = f"{verb} {project.tag}"
+                    event.begin = begin
+                    event.end = begin + timedelta(hours=duration_h)
+                    event.description = f"{verb} for {project.title}"
+                    calendar.events.add(event)
+            current += timedelta(days=1)
     return calendar
 
 

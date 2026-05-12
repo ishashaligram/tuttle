@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from "react";
 import {
   FileText, Send, CheckCircle, XCircle,
   Building2, FolderKanban, Calendar, Banknote, Eye, Search,
+  Plus, Clock,
 } from "lucide-react";
 import { rpc, readFileAsDataURL } from "../../api/rpc";
 import { str, num, bool, list as entityList, formatDate, invoiceStatus } from "../../api/entity";
@@ -35,6 +36,7 @@ export function InvoicingView() {
   const [viewMode, setViewMode] = useState<"list" | "board">("list");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("All");
   const [search, setSearch] = useState("");
+  const [createOpen, setCreateOpen] = useState(false);
 
   const defaultColumn = useCallback(
     (e: { id: number; [k: string]: unknown }) => invoiceStatus(e as Entity), [],
@@ -88,6 +90,10 @@ export function InvoicingView() {
       {/* Toolbar */}
       <div className="flex items-center gap-2 px-4 py-2 shrink-0 border-b border-border-subtle">
         <h2 className="text-sm font-semibold">Invoicing</h2>
+        <button onClick={() => setCreateOpen(true)}
+          className="flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-medium bg-accent text-white hover:bg-accent/90 transition-colors">
+          <Plus size={13} /> Create Invoice
+        </button>
         <div className="flex-1" />
         {viewMode === "list" && (
           <div className="flex items-center gap-1">
@@ -151,6 +157,153 @@ export function InvoicingView() {
             renderCard={(inv, col) => <InvoiceCard invoice={inv} color={col.color} />} />
         </div>
       )}
+
+      {createOpen && (
+        <CreateInvoiceDialog
+          onClose={() => setCreateOpen(false)}
+          onCreated={() => { setCreateOpen(false); load(); }}
+        />
+      )}
+    </div>
+  );
+}
+
+function CreateInvoiceDialog({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
+  const [projects, setProjects] = useState<Entity[]>([]);
+  const [projectId, setProjectId] = useState<number | null>(null);
+  const [invoiceDate, setInvoiceDate] = useState(new Date().toISOString().slice(0, 10));
+  const [fromDate, setFromDate] = useState(() => {
+    const d = new Date(); d.setMonth(d.getMonth() - 1); d.setDate(1); return d.toISOString().slice(0, 10);
+  });
+  const [toDate, setToDate] = useState(() => {
+    const d = new Date(); d.setDate(0); return d.toISOString().slice(0, 10);
+  });
+  const [mode, setMode] = useState<"timetracking" | "manual">("timetracking");
+  const [manualQty, setManualQty] = useState("");
+  const [hasTimeData, setHasTimeData] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    (async () => {
+      const [projRes, ttRes] = await Promise.all([
+        rpc<Entity[]>("projects.get_all"),
+        rpc<{ total_events: number }>("timetracking.get_summary"),
+      ]);
+      if (projRes.ok && projRes.data) {
+        const active = projRes.data.filter((p) => !bool(p, "is_completed"));
+        setProjects(active);
+        if (active.length > 0) setProjectId(active[0].id);
+      }
+      if (ttRes.ok && ttRes.data && ttRes.data.total_events > 0) setHasTimeData(true);
+      else setMode("manual");
+    })();
+  }, []);
+
+  async function submit() {
+    if (!projectId) { setError("Select a project"); return; }
+    setSubmitting(true);
+    setError("");
+    const params: Record<string, unknown> = {
+      project_id: projectId,
+      invoice_date: invoiceDate,
+      from_date: fromDate,
+      to_date: toDate,
+    };
+    if (mode === "manual") {
+      const qty = parseFloat(manualQty);
+      if (!qty || qty <= 0) { setError("Enter a valid quantity"); setSubmitting(false); return; }
+      params.manual_quantity = qty;
+    }
+    const res = await rpc("invoicing.create", params);
+    setSubmitting(false);
+    if (res.ok) onCreated();
+    else setError(res.error || "Failed to create invoice");
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={onClose}>
+      <div className="bg-bg-content rounded-xl border border-border-subtle shadow-2xl w-[420px] max-h-[90vh] overflow-y-auto"
+        onClick={(e) => e.stopPropagation()}>
+        <div className="px-5 py-4 border-b border-border-subtle">
+          <h2 className="text-base font-semibold">Create Invoice</h2>
+        </div>
+        <div className="px-5 py-4 space-y-4">
+          {/* Project */}
+          <label className="block">
+            <span className="text-xs font-semibold text-secondary uppercase tracking-wider">Project</span>
+            <select value={projectId ?? ""} onChange={(e) => setProjectId(Number(e.target.value))}
+              className="mt-1 w-full px-3 py-1.5 rounded-md bg-bg-card border border-border-subtle text-sm text-primary">
+              {projects.map((p) => (
+                <option key={p.id} value={p.id}>{str(p, "title")}</option>
+              ))}
+            </select>
+          </label>
+
+          {/* Mode toggle */}
+          <div>
+            <span className="text-xs font-semibold text-secondary uppercase tracking-wider">Source</span>
+            <div className="flex gap-2 mt-1">
+              <button onClick={() => setMode("timetracking")} disabled={!hasTimeData}
+                className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-medium transition-colors border
+                  ${mode === "timetracking" ? "border-accent bg-accent/15 text-primary" : "border-border-subtle text-tertiary"}
+                  ${!hasTimeData ? "opacity-40 cursor-not-allowed" : ""}`}>
+                <Clock size={14} /> Time Tracking
+              </button>
+              <button onClick={() => setMode("manual")}
+                className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-medium transition-colors border
+                  ${mode === "manual" ? "border-accent bg-accent/15 text-primary" : "border-border-subtle text-tertiary"}`}>
+                <FileText size={14} /> Manual
+              </button>
+            </div>
+            {!hasTimeData && (
+              <p className="text-[10px] text-muted mt-1">Import calendar data in Time Tracking to use this option.</p>
+            )}
+          </div>
+
+          {/* Dates */}
+          <div className="grid grid-cols-3 gap-2">
+            <label className="block">
+              <span className="text-[10px] font-semibold text-muted uppercase">Invoice Date</span>
+              <input type="date" value={invoiceDate} onChange={(e) => setInvoiceDate(e.target.value)}
+                className="mt-1 w-full px-2 py-1.5 rounded-md bg-bg-card border border-border-subtle text-xs text-primary" />
+            </label>
+            <label className="block">
+              <span className="text-[10px] font-semibold text-muted uppercase">From</span>
+              <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)}
+                className="mt-1 w-full px-2 py-1.5 rounded-md bg-bg-card border border-border-subtle text-xs text-primary" />
+            </label>
+            <label className="block">
+              <span className="text-[10px] font-semibold text-muted uppercase">To</span>
+              <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)}
+                className="mt-1 w-full px-2 py-1.5 rounded-md bg-bg-card border border-border-subtle text-xs text-primary" />
+            </label>
+          </div>
+
+          {/* Manual quantity */}
+          {mode === "manual" && (
+            <label className="block">
+              <span className="text-xs font-semibold text-secondary uppercase tracking-wider">Quantity (hours)</span>
+              <input type="number" min="0" step="0.5" value={manualQty} onChange={(e) => setManualQty(e.target.value)}
+                placeholder="e.g. 40"
+                className="mt-1 w-full px-3 py-1.5 rounded-md bg-bg-card border border-border-subtle text-sm text-primary placeholder:text-muted" />
+            </label>
+          )}
+
+          {error && <p className="text-xs text-red-400">{error}</p>}
+        </div>
+
+        <div className="px-5 py-3 border-t border-border-subtle flex justify-end gap-2">
+          <button onClick={onClose}
+            className="px-4 py-1.5 rounded-md text-sm text-secondary hover:text-primary hover:bg-bg-hover transition-colors">
+            Cancel
+          </button>
+          <button onClick={submit} disabled={submitting}
+            className="px-4 py-1.5 rounded-md text-sm font-medium bg-accent text-white hover:bg-accent/90 transition-colors disabled:opacity-50">
+            {submitting ? "Creating…" : "Create Invoice"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

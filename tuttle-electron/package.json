@@ -33,7 +33,12 @@
     ],
     "mac": {
       "category": "public.app-category.business",
-      "target": "dmg"
+      "target": ["dmg", "dir"],
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "extendInfo": {
+        "NSCalendarsFullAccessUsageDescription": "Tuttle needs access to your calendars to import events for time tracking."
+      }
     },
     "win": {
       "target": "nsis"

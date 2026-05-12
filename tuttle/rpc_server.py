@@ -73,6 +73,14 @@ def _get_intent(name: str):
             from tuttle.app.salary.intent import SalaryIntent
 
             _intents[name] = SalaryIntent()
+        elif name == "timetracking":
+            from tuttle.app.timetracking.intent import TimeTrackingIntent
+
+            _intents[name] = TimeTrackingIntent(client_storage=None)
+        elif name == "timetracking_ds":
+            from tuttle.app.timetracking.data_source import TimeTrackingDataFrameSource
+
+            _intents[name] = TimeTrackingDataFrameSource()
         else:
             raise ValueError(f"Unknown intent domain: {name}")
     return _intents[name]
@@ -183,6 +191,104 @@ def _patch_scalars_from_rpc(instance: Any, updates: Dict[str, Any], skip: set) -
 
 
 # ---------------------------------------------------------------------------
+# Time-tracking helpers (DataFrame → JSON)
+# ---------------------------------------------------------------------------
+
+
+def _timetracking_df_to_records(df) -> list:
+    """Convert a time-tracking DataFrame to a list of JSON-safe dicts."""
+    if df is None or df.empty:
+        return []
+    records = []
+    for idx, row in df.iterrows():
+        begin = idx
+        if hasattr(begin, "isoformat"):
+            begin = begin.isoformat()
+        end = row.get("end")
+        if hasattr(end, "isoformat"):
+            end = end.isoformat()
+        dur = row.get("duration")
+        dur_hours = dur.total_seconds() / 3600 if hasattr(dur, "total_seconds") else 0
+        records.append(
+            {
+                "begin": str(begin),
+                "end": str(end) if end is not None else None,
+                "duration_hours": round(dur_hours, 2),
+                "title": str(row.get("title", "")),
+                "tag": str(row.get("tag", "")),
+                "description": str(row.get("description", "") or ""),
+                "all_day": bool(row.get("all_day", False)),
+                "date": str(begin)[:10],
+            }
+        )
+    return records
+
+
+def _build_calendar_data(df, year: int, month: int, project_tag=None) -> dict:
+    """Build a month-view calendar payload from a time-tracking DataFrame.
+
+    Returns a dict with ``events`` (records for this month), ``projects``
+    (unique tags with hours), ``days`` (per-day aggregation for the grid),
+    and ``summary`` (totals).
+    """
+    import calendar as cal_mod
+
+    start = datetime.date(year, month, 1)
+    _, last_day = cal_mod.monthrange(year, month)
+    end = datetime.date(year, month, last_day)
+
+    mask = (df.index.date >= start) & (df.index.date <= end)
+    month_df = df[mask]
+    if project_tag:
+        month_df = month_df[month_df["tag"] == project_tag]
+
+    events = _timetracking_df_to_records(month_df)
+
+    by_tag = (
+        month_df.groupby("tag")["duration"]
+        .sum()
+        .apply(lambda td: round(td.total_seconds() / 3600, 1))
+        .to_dict()
+    )
+    projects = [
+        {"tag": t, "hours": h} for t, h in sorted(by_tag.items(), key=lambda x: -x[1])
+    ]
+
+    days: dict = {}
+    for idx, row in month_df.iterrows():
+        d = str(idx.date()) if hasattr(idx, "date") else str(idx)[:10]
+        if d not in days:
+            days[d] = {"date": d, "hours": 0.0, "tags": [], "count": 0}
+        dur = row.get("duration")
+        h = dur.total_seconds() / 3600 if hasattr(dur, "total_seconds") else 0
+        days[d]["hours"] = round(days[d]["hours"] + h, 2)
+        days[d]["count"] += 1
+        tag = str(row.get("tag", ""))
+        if tag and tag not in days[d]["tags"]:
+            days[d]["tags"].append(tag)
+
+    total_hours = (
+        round(month_df["duration"].sum().total_seconds() / 3600, 1)
+        if len(month_df)
+        else 0
+    )
+
+    return {
+        "year": year,
+        "month": month,
+        "first_weekday": start.weekday(),
+        "days_in_month": last_day,
+        "events": events,
+        "projects": projects,
+        "days": days,
+        "summary": {
+            "total_events": len(month_df),
+            "total_hours": total_hours,
+        },
+    }
+
+
+# ---------------------------------------------------------------------------
 # Method dispatch table
 # ---------------------------------------------------------------------------
 
@@ -212,6 +318,40 @@ def _switch_to_user_db(db_file: str):
     _reset_intents()
     logger.info(f"Switched to user DB: {db_file}")
 
+    if db_file == "harry-tuttle.db":
+        _ensure_demo_timetracking(db_path)
+
+
+def _ensure_demo_timetracking(db_path=None):
+    """Repopulate demo time-tracking data for the Harry Tuttle demo user only."""
+    ds = _get_intent("timetracking_ds")
+    if ds.get_data_frame() is not None:
+        return
+    try:
+        from sqlmodel import Session, create_engine, select
+        from tuttle.model import Project
+        from tuttle.demo import create_fake_calendar
+        from tuttle.calendar import ICSCalendar
+
+        if db_path is None:
+            from tuttle.app.core.abstractions import get_active_db
+
+            db_path = get_active_db()
+
+        engine = create_engine(f"sqlite:///{db_path}")
+        with Session(engine) as session:
+            projects = session.exec(select(Project)).all()
+        if not projects:
+            return
+        cal = ICSCalendar(
+            name="Demo calendar", ics_calendar=create_fake_calendar(list(projects))
+        )
+        df = cal.to_data()
+        ds.store_data_frame(df)
+        logger.info(f"Repopulated {len(df)} demo time-tracking events")
+    except Exception as ex:
+        logger.warning(f"Could not repopulate demo timetracking: {ex}")
+
 
 def _ensure_demo_user(
     invoice_language: str = "en",
@@ -234,10 +374,16 @@ def _ensure_demo_user(
     if db_path.exists():
         db_path.unlink()
     run_migrations(f"sqlite:///{db_path}")
+
+    def _cache_demo_timetracking(df):
+        ds = _get_intent("timetracking_ds")
+        ds.store_data_frame(df)
+        logger.info(f"Cached {len(df)} demo time-tracking events")
+
     install_demo_data(
         n_projects=4,
         db_path=str(db_path),
-        on_cache_timetracking_dataframe=lambda _: None,
+        on_cache_timetracking_dataframe=_cache_demo_timetracking,
         invoice_language=invoice_language,
         invoice_template=invoice_template,
     )
@@ -1036,6 +1182,186 @@ def _dispatch(method: str, params: Dict[str, Any]) -> Any:
         prefix = params.get("prefix")
         data = app_db.get_all_settings(prefix=prefix)
         return {"ok": True, "data": data, "error": None}
+
+    # -- Time Tracking ------------------------------------------------------
+    if method == "timetracking.get_events":
+        ds = _get_intent("timetracking_ds")
+        df = ds.get_data_frame()
+        if df is None or df.empty:
+            return {"ok": True, "data": [], "error": None}
+        project_tag = params.get("project_tag")
+        if project_tag:
+            df = df[df["tag"] == project_tag]
+        records = _timetracking_df_to_records(df)
+        return {"ok": True, "data": records, "error": None}
+
+    if method == "timetracking.get_calendar_data":
+        ds = _get_intent("timetracking_ds")
+        df = ds.get_data_frame()
+        if df is None or df.empty:
+            return {
+                "ok": True,
+                "data": {"events": [], "projects": [], "summary": {}},
+                "error": None,
+            }
+        project_tag = params.get("project_tag")
+        year = params.get("year", datetime.date.today().year)
+        month = params.get("month", datetime.date.today().month)
+        data = _build_calendar_data(df, year, month, project_tag)
+        return {"ok": True, "data": data, "error": None}
+
+    if method == "timetracking.import_ics":
+        import base64
+
+        content_b64 = params["content"]
+        name = params.get("name", "imported.ics")
+        raw = base64.b64decode(content_b64)
+        from tuttle.calendar import ICSCalendar
+
+        cal = ICSCalendar(name=name, content=raw)
+        new_df = cal.to_data()
+        ds = _get_intent("timetracking_ds")
+        existing = ds.get_data_frame()
+        if existing is not None and not existing.empty:
+            import pandas
+
+            combined = pandas.concat([existing, new_df])
+            combined = combined[~combined.index.duplicated(keep="last")]
+            ds.store_data_frame(combined)
+        else:
+            ds.store_data_frame(new_df)
+        records = _timetracking_df_to_records(new_df)
+        return {
+            "ok": True,
+            "data": {"imported_count": len(records), "events": records},
+            "error": None,
+        }
+
+    if method == "timetracking.clear":
+        ds = _get_intent("timetracking_ds")
+        ds.store_data_frame(None)
+        return {"ok": True, "data": None, "error": None}
+
+    if method == "timetracking.list_system_calendars":
+        from tuttle.eventkit_bridge import (
+            is_available,
+            list_calendars_with_status,
+            open_calendar_privacy_settings,
+        )
+
+        if not is_available():
+            return {
+                "ok": True,
+                "data": {"calendars": [], "auth_status": "not_available"},
+                "error": None,
+            }
+
+        if params.get("open_settings"):
+            open_calendar_privacy_settings()
+            return {
+                "ok": True,
+                "data": {"calendars": [], "auth_status": "pending"},
+                "error": None,
+            }
+
+        try:
+            data = list_calendars_with_status()
+            return {"ok": True, "data": data, "error": None}
+        except Exception as ex:
+            logger.exception(ex)
+            return {
+                "ok": False,
+                "data": {"calendars": [], "auth_status": "unknown"},
+                "error": str(ex),
+            }
+
+    if method == "timetracking.import_system_calendar":
+        from tuttle.eventkit_bridge import is_available, fetch_events
+
+        if not is_available():
+            return {
+                "ok": False,
+                "data": None,
+                "error": "System calendar access is only available on macOS",
+            }
+        calendar_id = params["calendar_id"]
+        from_date = datetime.date.fromisoformat(
+            params.get(
+                "from_date",
+                (datetime.date.today() - datetime.timedelta(days=365)).isoformat(),
+            )
+        )
+        to_date = datetime.date.fromisoformat(
+            params.get("to_date", datetime.date.today().isoformat())
+        )
+        try:
+            new_df = fetch_events(calendar_id, from_date, to_date)
+            if new_df.empty:
+                return {
+                    "ok": True,
+                    "data": {"imported_count": 0, "events": []},
+                    "error": None,
+                }
+            ds = _get_intent("timetracking_ds")
+            existing = ds.get_data_frame()
+            if existing is not None and not existing.empty:
+                import pandas
+
+                combined = pandas.concat([existing, new_df])
+                combined = combined[~combined.index.duplicated(keep="last")]
+                ds.store_data_frame(combined)
+            else:
+                ds.store_data_frame(new_df)
+            records = _timetracking_df_to_records(new_df)
+            return {
+                "ok": True,
+                "data": {"imported_count": len(records), "events": records},
+                "error": None,
+            }
+        except Exception as ex:
+            logger.exception(ex)
+            return {"ok": False, "data": None, "error": str(ex)}
+
+    if method == "timetracking.get_summary":
+        ds = _get_intent("timetracking_ds")
+        df = ds.get_data_frame()
+        if df is None or df.empty:
+            return {
+                "ok": True,
+                "data": {"total_events": 0, "total_hours": 0, "projects": []},
+                "error": None,
+            }
+        total_hours = df["duration"].sum().total_seconds() / 3600
+        by_tag = (
+            df.groupby("tag")["duration"]
+            .sum()
+            .apply(lambda td: round(td.total_seconds() / 3600, 1))
+            .to_dict()
+        )
+        projects_intent = _get_intent("projects")
+        proj_result = projects_intent.get_all()
+        tag_to_project = {}
+        if proj_result.was_intent_successful and proj_result.data:
+            tag_to_project = {p.tag: p.title for p in proj_result.data}
+        project_summaries = []
+        for tag, hours in sorted(by_tag.items(), key=lambda x: -x[1]):
+            project_summaries.append(
+                {
+                    "tag": tag,
+                    "title": tag_to_project.get(tag, tag),
+                    "hours": hours,
+                    "event_count": int((df["tag"] == tag).sum()),
+                }
+            )
+        return {
+            "ok": True,
+            "data": {
+                "total_events": len(df),
+                "total_hours": round(total_hours, 1),
+                "projects": project_summaries,
+            },
+            "error": None,
+        }
 
     # -- Demo ---------------------------------------------------------------
     if method == "demo.install":

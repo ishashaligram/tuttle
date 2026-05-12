@@ -394,7 +394,7 @@ function ContactForm({ contact, onSave, onCancel }: {
             <X size={14} /> Cancel
           </button>
           <button type="submit" disabled={saving || !hasName}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium text-accent hover:bg-bg-hover transition-colors disabled:opacity-40">
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium text-primary hover:bg-bg-hover transition-colors disabled:opacity-40">
             <Save size={14} /> {saving ? "Saving…" : "Save"}
           </button>
         </div>

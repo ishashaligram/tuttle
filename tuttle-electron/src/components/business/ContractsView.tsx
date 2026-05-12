@@ -381,12 +381,12 @@ function RelatedCard({ icon, count, label, onClick }: { icon: React.ReactNode; c
     <Tag onClick={onClick}
       className={`flex items-center gap-3 px-4 py-3 rounded-lg bg-bg-card border border-border-subtle min-w-[120px] transition-colors
         ${interactive ? "hover:border-accent hover:bg-bg-hover cursor-pointer group" : ""}`}>
-      <span className={`text-tertiary ${interactive ? "group-hover:text-accent" : ""}`}>{icon}</span>
+      <span className={`text-tertiary ${interactive ? "group-hover:text-primary" : ""}`}>{icon}</span>
       <div className="flex-1">
         <div className="text-lg font-semibold leading-none">{count}</div>
         <div className="text-xs text-tertiary">{label}</div>
       </div>
-      {interactive && <ArrowRight size={14} className="text-tertiary group-hover:text-accent" />}
+      {interactive && <ArrowRight size={14} className="text-tertiary group-hover:text-primary" />}
     </Tag>
   );
 }
@@ -472,7 +472,7 @@ function ContractForm({ contract, clients, defaultCurrency, onSave, onCancel }: 
             <X size={14} /> Cancel
           </button>
           <button type="submit" disabled={saving}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium text-accent hover:bg-bg-hover transition-colors disabled:opacity-40">
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium text-primary hover:bg-bg-hover transition-colors disabled:opacity-40">
             <Save size={14} /> {saving ? "Saving…" : "Save"}
           </button>
         </div>

@@ -10,9 +10,17 @@ app      := electron / "release/mac-arm64/Tuttle.app"
 
 # ── Development ─────────────────────────────────────────────────────────────
 
-# Vite dev server with hot reload (no packaged .app, no calendar access)
+# Electron + Vite dev server (hot reload, live Python from .venv)
 dev:
-    cd {{electron}} && npx vite
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd "{{electron}}"
+    npm run build
+    npx vite &
+    VITE_PID=$!
+    sleep 2
+    VITE_DEV_SERVER_URL=http://localhost:5173 npx electron .
+    kill $VITE_PID 2>/dev/null || true
 
 # ── Build ───────────────────────────────────────────────────────────────────
 

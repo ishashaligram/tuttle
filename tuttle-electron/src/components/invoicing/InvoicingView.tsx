@@ -45,10 +45,16 @@ export function InvoicingView() {
 
   useEffect(() => { load(); }, []);
 
-  async function load() {
+  async function load(selectId?: number) {
     setLoading(true);
     const res = await rpc<Entity[]>("invoicing.get_all");
-    if (res.ok && res.data) setInvoices(res.data);
+    if (res.ok && res.data) {
+      setInvoices(res.data);
+      if (selectId != null) {
+        const match = res.data.find((i) => i.id === selectId);
+        if (match) setSelected(match);
+      }
+    }
     setLoading(false);
   }
 
@@ -161,14 +167,14 @@ export function InvoicingView() {
       {createOpen && (
         <CreateInvoiceDialog
           onClose={() => setCreateOpen(false)}
-          onCreated={() => { setCreateOpen(false); load(); }}
+          onCreated={async (newId) => { await load(newId); setCreateOpen(false); }}
         />
       )}
     </div>
   );
 }
 
-function CreateInvoiceDialog({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
+function CreateInvoiceDialog({ onClose, onCreated }: { onClose: () => void; onCreated: (newId?: number) => Promise<void> | void }) {
   const [projects, setProjects] = useState<Entity[]>([]);
   const [projectId, setProjectId] = useState<number | null>(null);
   const [invoiceDate, setInvoiceDate] = useState(new Date().toISOString().slice(0, 10));
@@ -215,10 +221,13 @@ function CreateInvoiceDialog({ onClose, onCreated }: { onClose: () => void; onCr
       if (!qty || qty <= 0) { setError("Enter a valid quantity"); setSubmitting(false); return; }
       params.manual_quantity = qty;
     }
-    const res = await rpc("invoicing.create", params);
+    const res = await rpc<{ id?: number }>("invoicing.create", params);
+    if (res.ok) {
+      await onCreated(res.data?.id);
+    } else {
+      setError(res.error || "Failed to create invoice");
+    }
     setSubmitting(false);
-    if (res.ok) onCreated();
-    else setError(res.error || "Failed to create invoice");
   }
 
   return (

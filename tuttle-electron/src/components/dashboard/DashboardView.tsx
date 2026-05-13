@@ -6,23 +6,35 @@ import {
 import { rpc } from "../../api/rpc";
 import { str, num, int } from "../../api/entity";
 import { KPICard } from "../shared/KPICard";
+import { ProgressBar } from "../shared/ProgressBar";
 import type { Entity } from "../../api/types";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } from "recharts";
+
+interface BudgetEntry {
+  project_id: number;
+  project: string;
+  hours_tracked: number;
+  hours_budget: number;
+  progress: number;
+}
 
 export function DashboardView() {
   const [kpis, setKpis] = useState<Entity | null>(null);
   const [chartData, setChartData] = useState<{ label: string; revenue: number; spendable: number }[]>([]);
+  const [budgets, setBudgets] = useState<BudgetEntry[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => { load(); }, []);
 
   async function load() {
     setLoading(true);
-    const [kpiRes, chartRes] = await Promise.all([
+    const [kpiRes, chartRes, budgetRes] = await Promise.all([
       rpc("dashboard.get_kpis"),
       rpc("dashboard.get_monthly_chart_data", { n_months: 12 }),
+      rpc<BudgetEntry[]>("dashboard.get_project_budgets"),
     ]);
     if (kpiRes.ok && kpiRes.data) setKpis(kpiRes.data as Entity);
+    if (budgetRes.ok && Array.isArray(budgetRes.data)) setBudgets(budgetRes.data);
     if (chartRes.ok && chartRes.data) {
       const d = chartRes.data as { revenue: Entity[]; spendable: Entity[] };
       const rev = (d.revenue || []) as Entity[];
@@ -82,6 +94,20 @@ export function DashboardView() {
               <Bar dataKey="spendable" name="Spendable" fill="#4ade80" radius={[3, 3, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
+        </div>
+      )}
+
+      {budgets.length > 0 && (
+        <div className="rounded-lg bg-bg-card border border-border-subtle p-4 space-y-3">
+          <h2 className="text-sm font-medium text-secondary">Project Time Budgets</h2>
+          {budgets.map((b) => (
+            <ProgressBar
+              key={b.project_id}
+              progress={b.progress}
+              label={b.project}
+              subtitle={`${b.hours_tracked.toFixed(1)}h / ${b.hours_budget.toFixed(0)}h`}
+            />
+          ))}
         </div>
       )}
     </div>

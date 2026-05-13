@@ -5,6 +5,7 @@ from decimal import Decimal
 from typing import List, Optional, NamedTuple
 
 from .model import Contract, Invoice, Project, User
+from .time import TimeUnit
 from .tax import get_tax_system
 from .tax_reserves import compute_spendable_income
 
@@ -287,7 +288,9 @@ def project_budget_status(
 ) -> list:
     """Budget utilization for each project with timesheets.
 
-    Returns a list of dicts with keys: project, hours_tracked, hours_budget, progress.
+    Returns a list of dicts with keys: project_id, project, hours_tracked,
+    hours_budget, progress.  Skips projects without a contract volume or
+    without any tracked time.
     """
     results = []
     for project in projects:
@@ -297,11 +300,16 @@ def project_budget_status(
         for ts in project.timesheets:
             for item in ts.items:
                 hours_tracked += Decimal(str(item.duration.total_seconds() / 3600))
+        if hours_tracked == 0:
+            continue
         hours_budget = Decimal(str(project.contract.volume))
+        if project.contract.unit == TimeUnit.day:
+            hours_budget *= project.contract.units_per_workday
         progress = float(hours_tracked / hours_budget) if hours_budget > 0 else 0.0
 
         results.append(
             {
+                "project_id": project.id,
                 "project": project.title,
                 "hours_tracked": float(hours_tracked),
                 "hours_budget": float(hours_budget),

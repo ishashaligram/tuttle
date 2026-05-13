@@ -6,10 +6,19 @@ import {
 import { rpc } from "../../api/rpc";
 import { str, int, num, bool, entity, dateRange, projectStatus } from "../../api/entity";
 import { StatusBadge } from "../shared/StatusBadge";
+import { ProgressBar } from "../shared/ProgressBar";
 import { ViewModeToggle } from "../shared/ViewModeToggle";
 import { KanbanBoard, useStageStore, type BoardColumn } from "../shared/KanbanBoard";
 import { useNavigation } from "../shared/NavigationContext";
 import type { Entity } from "../../api/types";
+
+interface BudgetEntry {
+  project_id: number;
+  project: string;
+  hours_tracked: number;
+  hours_budget: number;
+  progress: number;
+}
 
 type Mode = "view" | "edit" | "create" | "import";
 
@@ -31,6 +40,7 @@ export function ProjectsView() {
   const { filter: navFilter } = useNavigation();
   const [projects, setProjects] = useState<Entity[]>([]);
   const [contractsMap, setContractsMap] = useState<Record<string, Entity>>({});
+  const [budgetsMap, setBudgetsMap] = useState<Record<number, BudgetEntry>>({});
   const [selected, setSelected] = useState<Entity | null>(null);
   const [loading, setLoading] = useState(true);
   const [viewMode, setViewMode] = useState<"list" | "board">("list");
@@ -56,9 +66,10 @@ export function ProjectsView() {
 
   async function load() {
     setLoading(true);
-    const [res, cRes] = await Promise.all([
+    const [res, cRes, bRes] = await Promise.all([
       rpc<Entity[]>("projects.get_all"),
       rpc<Record<string, Entity>>("projects.get_all_contracts"),
+      rpc<BudgetEntry[]>("dashboard.get_project_budgets"),
     ]);
     if (res.ok && res.data) {
       setProjects(res.data);
@@ -69,6 +80,11 @@ export function ProjectsView() {
       }
     }
     if (cRes.ok && cRes.data) setContractsMap(cRes.data);
+    if (bRes.ok && Array.isArray(bRes.data)) {
+      const map: Record<number, BudgetEntry> = {};
+      for (const b of bRes.data) map[b.project_id] = b;
+      setBudgetsMap(map);
+    }
     setLoading(false);
   }
 
@@ -285,6 +301,13 @@ export function ProjectsView() {
                   <DetailRow label="Contract" value={selectedContract ? str(selectedContract, "title") : "—"} />
                   <DetailRow label="Rate" value={selectedContract ? `${str(selectedContract, "rate")} ${str(selectedContract, "currency")}/${str(selectedContract, "unit")}` : "—"} />
                 </div>
+                {selected.id != null && budgetsMap[selected.id as number] && (
+                  <ProgressBar
+                    progress={budgetsMap[selected.id as number].progress}
+                    label="Time Budget"
+                    subtitle={`${budgetsMap[selected.id as number].hours_tracked.toFixed(1)}h / ${budgetsMap[selected.id as number].hours_budget.toFixed(0)}h`}
+                  />
+                )}
               </div>
             ) : (
               <div className="flex flex-col items-center justify-center h-full gap-2 text-tertiary">
@@ -297,7 +320,7 @@ export function ProjectsView() {
         <div className="flex-1 overflow-hidden">
           <KanbanBoard entities={boardFiltered} columns={PROJECT_COLUMNS}
             columnFor={(e) => stageStore.columnFor(e)} onMove={moveToColumn}
-            renderCard={(proj, col) => <ProjectCard project={proj} color={col.color} />} />
+            renderCard={(proj, col) => <ProjectCard project={proj} color={col.color} budgetsMap={budgetsMap} />} />
         </div>
       )}
     </div>
@@ -311,9 +334,10 @@ function clientName(p: Entity): string {
   return c ? str(entity(c, "client") || ({} as Entity), "name") : "";
 }
 
-function ProjectCard({ project }: { project: Entity; color: string }) {
+function ProjectCard({ project, budgetsMap }: { project: Entity; color: string; budgetsMap: Record<number, BudgetEntry> }) {
   const cName = clientName(project);
   const c = entity(project, "contract");
+  const budget = project.id != null ? budgetsMap[project.id as number] : undefined;
   return (
     <div className="space-y-2">
       <div>
@@ -339,6 +363,12 @@ function ProjectCard({ project }: { project: Entity; color: string }) {
           <Calendar size={11} className="shrink-0" />
           <span className="text-xs">{dateRange(project)}</span>
         </div>
+      )}
+      {budget && (
+        <ProgressBar
+          progress={budget.progress}
+          subtitle={`${budget.hours_tracked.toFixed(1)}h / ${budget.hours_budget.toFixed(0)}h`}
+        />
       )}
     </div>
   );

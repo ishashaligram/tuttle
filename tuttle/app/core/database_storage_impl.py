@@ -6,7 +6,7 @@ import sqlmodel
 from loguru import logger
 
 from ... import demo
-from ...migrations.run import run_migrations
+from ...db_schema import ensure_schema
 
 from .abstractions import DatabaseStorage
 
@@ -27,16 +27,16 @@ class DatabaseStorageImpl(DatabaseStorage):
         return f"sqlite:///{self.db_path}"
 
     def create_model(self):
-        logger.info("Creating/migrating database model")
-        run_migrations(self.db_url)
+        logger.info("Creating database schema")
+        ensure_schema(self.db_url)
 
     def ensure_database(self):
         if not self.db_path.exists():
             self.db_engine = sqlmodel.create_engine(self.db_url, echo=True)
             self.create_model()
         else:
-            logger.info("Database exists, running pending migrations")
-            run_migrations(self.db_url)
+            logger.info("Database exists, ensuring schema is up to date")
+            ensure_schema(self.db_url)
 
     def reset_database(self):
         logger.info("Clearing database")

@@ -13,7 +13,7 @@ from ..auth.data_source import UserDataSource
 from ..core.abstractions import get_active_db, set_active_db
 from ..core.intent_result import IntentResult
 from ..core.rpc_utils import reset_all
-from ...migrations.run import run_migrations
+from ...db_schema import ensure_schema
 
 
 class UsersIntent:
@@ -25,7 +25,7 @@ class UsersIntent:
     # -- helpers ---------------------------------------------------------------
 
     def _ensure_user_db(self, db_path: Path):
-        run_migrations(f"sqlite:///{db_path}")
+        ensure_schema(f"sqlite:///{db_path}")
 
     def _switch_to_user_db(self, db_file: str):
         """Switch the active per-user database and flush intent caches."""
@@ -162,7 +162,7 @@ class UsersIntent:
         subtitle = params.get("subtitle", "")
         reg = self._app_db.add_user(name=name, subtitle=subtitle)
         db_path = self._app_db.get_user_db_path(reg.db_file)
-        run_migrations(f"sqlite:///{db_path}")
+        ensure_schema(f"sqlite:///{db_path}")
 
         engine = sql_create_engine(f"sqlite:///{db_path}")
         with SqlSession(engine) as s:

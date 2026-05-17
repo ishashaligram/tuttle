@@ -38,7 +38,6 @@ dependencies = [
     "pycountry",
     "icloudpy",
     "pyobjc-framework-EventKit; sys_platform == 'darwin'",
-    "alembic>=1.18.4",
     "llama-index-core",
     "llama-index-llms-ollama",
 ]

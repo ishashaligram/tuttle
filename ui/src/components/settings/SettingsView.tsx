@@ -1,5 +1,15 @@
+/**
+ * SettingsView — persistent settings panel.
+ *
+ * COUPLING: The tabs here (Profile, Invoicing, AI/LLM) are mirrored in
+ * the onboarding wizard (OnboardingWizard.tsx). Any field or RPC change
+ * here must be reflected in the wizard, and vice-versa.
+ *
+ * @see {@link ../layout/OnboardingWizard.tsx}
+ */
+
 import { useEffect, useState } from "react";
-import { Settings, RefreshCw, Save, CheckCircle2, AlertCircle, User, Bot, FileText, RotateCcw } from "lucide-react";
+import { Settings, RefreshCw, Save, CheckCircle2, AlertCircle, User, Bot, FileText, RotateCcw, Trash2, AlertTriangle } from "lucide-react";
 import { rpc } from "../../api/rpc";
 import type { Entity } from "../../api/types";
 import { str } from "../../api/entity";
@@ -92,6 +102,10 @@ export function SettingsView() {
   const [isDemoUser, setIsDemoUser] = useState(false);
   const [resettingDemo, setResettingDemo] = useState(false);
   const [supportedCountries, setSupportedCountries] = useState<string[]>([]);
+  const [activeDbFile, setActiveDbFile] = useState<string | null>(null);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [deleteConfirmText, setDeleteConfirmText] = useState("");
+  const [deleting, setDeleting] = useState(false);
 
   const [invoicing, setInvoicing] = useState<InvoicingPrefs>({ ...DEFAULT_INVOICING });
   const [availableTemplates, setAvailableTemplates] = useState<Record<string, string>>({});
@@ -151,6 +165,7 @@ export function SettingsView() {
     if (res.ok && res.data) {
       const d = res.data as Entity;
       setIsDemoUser(!!d.is_demo);
+      if (d.db_file) setActiveDbFile(d.db_file as string);
       const p = d.profile as Entity | undefined;
       if (p) {
         const addr = p.address as Entity | undefined;
@@ -215,6 +230,13 @@ export function SettingsView() {
 
   function pset<K extends keyof ProfileForm>(key: K) {
     return (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => setProfile((p) => ({ ...p, [key]: e.target.value }));
+  }
+
+  async function handleDeleteUser() {
+    if (!activeDbFile) return;
+    setDeleting(true);
+    await rpc("users.delete", { db_file: activeDbFile });
+    window.location.reload();
   }
 
   // -- Invoicing preferences -----------------------------------------------
@@ -385,7 +407,68 @@ export function SettingsView() {
             <Save size={14} />
             {profileSaving ? "Saving…" : "Save Profile"}
           </button>
+
+          {/* Danger zone */}
+          <div className="mt-8 pt-6 border-t border-red-500/20">
+            <h3 className="text-sm font-semibold text-red-400 mb-2">Danger zone</h3>
+            <p className="text-xs text-muted mb-3">
+              Permanently delete this user and all associated data (contracts, invoices, time tracking, etc.). This action cannot be undone.
+            </p>
+            <button
+              onClick={() => { setDeleteConfirmOpen(true); setDeleteConfirmText(""); }}
+              disabled={deleting}
+              className="flex items-center gap-1.5 px-4 py-2 rounded-md text-sm font-medium text-red-400 border border-red-500/30 hover:bg-red-500/10 transition-colors disabled:opacity-40"
+            >
+              <Trash2 size={14} />
+              Delete user and data
+            </button>
+          </div>
         </section>
+      )}
+
+      {/* Delete confirmation modal */}
+      {deleteConfirmOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="bg-bg-sidebar rounded-xl shadow-2xl w-full max-w-sm mx-4 overflow-hidden">
+            <div className="px-5 py-4 space-y-4">
+              <div className="flex items-center gap-3">
+                <div className="flex items-center justify-center w-10 h-10 rounded-full bg-red-500/10">
+                  <AlertTriangle size={20} className="text-red-400" />
+                </div>
+                <div>
+                  <h3 className="text-base font-semibold text-primary">Delete user?</h3>
+                  <p className="text-xs text-muted">This will permanently remove all data.</p>
+                </div>
+              </div>
+              <p className="text-sm text-secondary">
+                Type <span className="font-mono font-semibold text-primary">{profile.name}</span> to confirm:
+              </p>
+              <input
+                className={inputCls}
+                value={deleteConfirmText}
+                onChange={(e) => setDeleteConfirmText(e.target.value)}
+                placeholder={profile.name}
+                autoFocus
+              />
+            </div>
+            <div className="flex justify-end gap-2 px-5 py-3 border-t border-border-subtle">
+              <button
+                onClick={() => setDeleteConfirmOpen(false)}
+                disabled={deleting}
+                className="px-4 py-1.5 text-sm rounded-md text-secondary hover:bg-bg-hover transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleDeleteUser}
+                disabled={deleting || deleteConfirmText !== profile.name}
+                className="px-4 py-1.5 text-sm rounded-md bg-red-500 text-white font-medium hover:bg-red-600 transition-colors disabled:opacity-40"
+              >
+                {deleting ? "Deleting…" : "Delete permanently"}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {tab === "invoicing" && (

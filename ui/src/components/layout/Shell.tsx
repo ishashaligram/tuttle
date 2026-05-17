@@ -1,6 +1,6 @@
 import { useState, useCallback, useMemo, useEffect } from "react";
 import { Sidebar, type RegisteredUser } from "./Sidebar";
-import { UserRegistrationDialog, type UserFormData } from "./UserRegistrationDialog";
+import { OnboardingWizard, type OnboardingData } from "./OnboardingWizard";
 import { DashboardView } from "../dashboard/DashboardView";
 import { ProjectsView } from "../business/ProjectsView";
 import { ClientsView } from "../business/ClientsView";
@@ -77,11 +77,6 @@ export function Shell() {
     setBootState("ready");
   }
 
-  async function handleWelcomeCreate() {
-    setBootState("loading");
-    setRegDialogOpen(true);
-  }
-
   async function handleSwitchUser(dbFile: string) {
     await rpc("users.switch", { db_file: dbFile });
     await refreshActiveUser();
@@ -101,19 +96,29 @@ export function Shell() {
     }
   }
 
-  async function handleRegSubmit(data: UserFormData) {
+  async function handleRegSubmit(data: OnboardingData) {
     setRegLoading(true);
-    const res = await rpc<RegisteredUser>("users.create", data as unknown as Record<string, unknown>);
-    setRegLoading(false);
-    setRegDialogOpen(false);
+    const res = await rpc<RegisteredUser>(
+      "users.create",
+      data.profile as unknown as Record<string, unknown>,
+    );
     if (res.ok && res.data) {
-      if (data.invoice_number_scheme) {
-        await rpc("preferences.save", { invoice_number_scheme: data.invoice_number_scheme });
+      await rpc("preferences.save", {
+        invoice_template: data.invoicing.invoice_template,
+        language: data.invoicing.language,
+        invoice_number_scheme: data.invoicing.invoice_number_scheme,
+      });
+      if (data.llm.model) {
+        await rpc("llm.save_config", { config: data.llm });
       }
       await refreshUsers();
       await refreshActiveUser();
+      setRegLoading(false);
+      setRegDialogOpen(false);
       setBootState("ready");
       window.location.reload();
+    } else {
+      setRegLoading(false);
     }
   }
 
@@ -135,37 +140,14 @@ export function Shell() {
 
   if (bootState === "welcome") {
     return (
-      <>
-        <div className="flex h-screen w-screen items-center justify-center bg-bg-content">
-          <div className="text-center space-y-6 max-w-md mx-4">
-            <h1 className="text-2xl font-bold text-primary">Welcome to Tuttle</h1>
-            <p className="text-secondary text-sm leading-relaxed">
-              Tuttle helps freelancers manage clients, contracts, invoicing and time tracking.
-              Get started by creating your profile or exploring with demo data.
-            </p>
-            <div className="flex flex-col gap-3 items-center">
-              <button
-                onClick={handleWelcomeCreate}
-                className="w-64 px-5 py-2.5 rounded-lg bg-accent text-white font-medium text-sm hover:bg-accent/90 transition-colors"
-              >
-                Create my profile
-              </button>
-              <button
-                onClick={handleWelcomeDemo}
-                className="w-64 px-5 py-2.5 rounded-lg border border-border-subtle text-secondary text-sm hover:bg-bg-hover hover:text-primary transition-colors"
-              >
-                Try with demo data
-              </button>
-            </div>
-          </div>
-        </div>
-        <UserRegistrationDialog
-          open={regDialogOpen}
-          onClose={() => { setRegDialogOpen(false); setBootState("welcome"); }}
-          onSubmit={handleRegSubmit}
-          loading={regLoading}
-        />
-      </>
+      <OnboardingWizard
+        open
+        overlay={false}
+        onClose={() => setBootState("welcome")}
+        onSubmit={handleRegSubmit}
+        onDemo={handleWelcomeDemo}
+        loading={regLoading}
+      />
     );
   }
 
@@ -190,10 +172,12 @@ export function Shell() {
           </div>
         </main>
       </div>
-      <UserRegistrationDialog
+      <OnboardingWizard
         open={regDialogOpen}
+        overlay
         onClose={() => setRegDialogOpen(false)}
         onSubmit={handleRegSubmit}
+        onDemo={handleWelcomeDemo}
         loading={regLoading}
       />
     </NavigationContext.Provider>

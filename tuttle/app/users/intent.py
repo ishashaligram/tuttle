@@ -1,18 +1,19 @@
 """User management: registration, profile updates, demo provisioning."""
 
+import shutil
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from loguru import logger
-from sqlmodel import Session as SqlSession, create_engine as sql_create_engine
+from sqlmodel import Session as SqlSession, create_engine as sql_create_engine, select
 
 from ...app_db import AppDatabase
-from ...model import Address, User
+from ...model import Address, Invoice, Timesheet, User
 from ..auth.data_source import UserDataSource
 from ..core.abstractions import get_active_db, set_active_db
 from ..core.intent_result import IntentResult
 from ..core.rpc_utils import reset_all
-from ...migrations.run import run_migrations
+from ...db_schema import ensure_schema
 
 
 class UsersIntent:
@@ -24,7 +25,7 @@ class UsersIntent:
     # -- helpers ---------------------------------------------------------------
 
     def _ensure_user_db(self, db_path: Path):
-        run_migrations(f"sqlite:///{db_path}")
+        ensure_schema(f"sqlite:///{db_path}")
 
     def _switch_to_user_db(self, db_file: str):
         """Switch the active per-user database and flush intent caches."""
@@ -85,10 +86,53 @@ class UsersIntent:
         return IntentResult(was_intent_successful=True, data=None)
 
     def delete(self, db_file: str, **_kw) -> IntentResult:
+        """Delete a user, their database, and all rendered output files."""
+        db_path = self._app_db.get_user_db_path(db_file)
+        self._cleanup_rendered_files(db_path)
         removed = self._app_db.remove_user(db_file)
         if removed:
             reset_all()
         return IntentResult(was_intent_successful=True, data=removed)
+
+    def _cleanup_rendered_files(self, db_path: Path):
+        """Remove rendered invoices and timesheets produced by this user."""
+        if not db_path.exists():
+            return
+        tuttle_dir = Path.home() / ".tuttle"
+        invoices_dir = tuttle_dir / "Invoices"
+        timesheets_dir = tuttle_dir / "Timesheets"
+        try:
+            engine = sql_create_engine(f"sqlite:///{db_path}")
+            with SqlSession(engine) as s:
+                invoices = s.exec(select(Invoice)).all()
+                for inv in invoices:
+                    if not inv.rendered:
+                        continue
+                    pdf = invoices_dir / inv.file_name
+                    if pdf.exists():
+                        pdf.unlink()
+                        logger.info(f"Deleted rendered invoice: {pdf}")
+                    prefix_dir = invoices_dir / inv.prefix
+                    if prefix_dir.is_dir():
+                        shutil.rmtree(prefix_dir)
+                        logger.info(f"Deleted invoice directory: {prefix_dir}")
+
+                timesheets = s.exec(select(Timesheet)).all()
+                for ts in timesheets:
+                    if not ts.rendered:
+                        continue
+                    for ext in ("pdf", "html"):
+                        f = timesheets_dir / f"{ts.prefix}.{ext}"
+                        if f.exists():
+                            f.unlink()
+                            logger.info(f"Deleted rendered timesheet: {f}")
+                    prefix_dir = timesheets_dir / ts.prefix
+                    if prefix_dir.is_dir():
+                        shutil.rmtree(prefix_dir)
+                        logger.info(f"Deleted timesheet directory: {prefix_dir}")
+            engine.dispose()
+        except Exception as ex:
+            logger.warning(f"Could not clean up rendered files for {db_path}: {ex}")
 
     def get_active(self) -> IntentResult:
         """Return the active registered user with their profile.
@@ -118,7 +162,7 @@ class UsersIntent:
         subtitle = params.get("subtitle", "")
         reg = self._app_db.add_user(name=name, subtitle=subtitle)
         db_path = self._app_db.get_user_db_path(reg.db_file)
-        run_migrations(f"sqlite:///{db_path}")
+        ensure_schema(f"sqlite:///{db_path}")
 
         engine = sql_create_engine(f"sqlite:///{db_path}")
         with SqlSession(engine) as s:
@@ -247,10 +291,9 @@ class UsersIntent:
         return IntentResult(was_intent_successful=True, data=reg)
 
     def ensure_db(self, **_kw) -> IntentResult:
-        """Ensure app.db + demo user + last-active user DB exist and are migrated."""
+        """Ensure app.db exists and switch to last-active user if any."""
         self._app_db.ensure()
         self._app_db.migrate_llm_config_from_json()
-        self.ensure_demo()
 
         last = self._app_db.get_last_active()
         if last:

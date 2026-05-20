@@ -43,6 +43,15 @@ INVOICE_LABELS = {
         "payment_details": "Payment Details",
         "description": "Description",
         "closing": "Thank you for your business.",
+        "reminder": "Payment Reminder",
+        "reminder_n": "{n}. Payment Reminder",
+        "reminder_fee": "Reminder Fee",
+        "original_invoice": "Original Invoice",
+        "reminder_closing": "Please settle the outstanding amount by the new due date.",
+        "units": {
+            "hour": ("hour", "hours"),
+            "day": ("day", "days"),
+        },
     },
     "de": {
         "invoice": "Rechnung",
@@ -62,6 +71,15 @@ INVOICE_LABELS = {
         "payment_details": "Zahlungsdetails",
         "description": "Beschreibung",
         "closing": "Vielen Dank für Ihren Auftrag.",
+        "reminder": "Zahlungserinnerung",
+        "reminder_n": "{n}. Mahnung",
+        "reminder_fee": "Mahngebühr",
+        "original_invoice": "Ursprungsrechnung",
+        "reminder_closing": "Bitte begleichen Sie den offenen Betrag bis zum neuen Fälligkeitsdatum.",
+        "units": {
+            "hour": ("Stunde", "Stunden"),
+            "day": ("Tag", "Tage"),
+        },
     },
     "es": {
         "invoice": "Factura",
@@ -81,6 +99,15 @@ INVOICE_LABELS = {
         "payment_details": "Datos de pago",
         "description": "Descripción",
         "closing": "Gracias por su confianza.",
+        "reminder": "Recordatorio de pago",
+        "reminder_n": "{n}.º recordatorio de pago",
+        "reminder_fee": "Cargo por recordatorio",
+        "original_invoice": "Factura original",
+        "reminder_closing": "Le rogamos abone el importe pendiente antes de la nueva fecha de vencimiento.",
+        "units": {
+            "hour": ("hora", "horas"),
+            "day": ("día", "días"),
+        },
     },
 }
 
@@ -237,6 +264,25 @@ def render_invoice(
     def as_percentage(number):
         return f"{number * 100:.1f} %"
 
+    def unit_label(raw_unit, quantity=None):
+        """Translate a TimeUnit value (e.g. "hour", "day") into the active language.
+
+        When ``quantity`` is given, choose between singular and plural form.
+        Unknown units pass through unchanged.
+        """
+        units = labels.get("units", {})
+        forms = units.get(raw_unit)
+        if not forms:
+            return raw_unit
+        singular, plural = forms
+        if quantity is None:
+            return singular
+        try:
+            q = float(quantity)
+        except (TypeError, ValueError):
+            return singular
+        return singular if abs(q - 1) < 1e-9 else plural
+
     template_path = get_template_path(template_name)
     template_env = jinja2.Environment(loader=jinja2.FileSystemLoader(template_path))
 
@@ -244,12 +290,22 @@ def render_invoice(
     template_env.filters["as_date"] = as_date
     template_env.filters["as_date_short"] = as_date_short
     template_env.filters["as_percentage"] = as_percentage
+    template_env.filters["unit_label"] = unit_label
+
+    is_reminder = getattr(invoice, "is_reminder", False)
+    reminder_title = ""
+    if is_reminder:
+        n = getattr(invoice, "reminder_level", 1)
+        tpl = labels.get("reminder_n", "{n}. Payment Reminder")
+        reminder_title = tpl.format(n=n)
 
     invoice_template = template_env.get_template("invoice.html")
     html = invoice_template.render(
         user=user,
         invoice=invoice,
         l=labels,
+        is_reminder=is_reminder,
+        reminder_title=reminder_title,
     )
     if out_dir is None:
         return html
@@ -320,6 +376,30 @@ def render_timesheet(
         if td
         else ""
     )
+
+    def _is_all_day(item) -> bool:
+        """A calendar event is all-day if it starts at midnight and lasts a multiple of 24h."""
+        if not item.begin or not item.end:
+            return False
+        if item.begin.hour or item.begin.minute or item.begin.second:
+            return False
+        total = (item.end - item.begin).total_seconds()
+        return total > 0 and total % 86400 == 0
+
+    def _time_range(item) -> str:
+        if _is_all_day(item):
+            return "All day"
+        return f"{item.begin.strftime('%H:%M')} – {item.end.strftime('%H:%M')}"
+
+    def _clean_title(item) -> str:
+        """Calendar event title with the project tag stripped, falling back to description."""
+        title = (item.title or "").replace(item.tag or "", "").strip(" -–·:|")
+        if not title:
+            return (item.description or "").strip()
+        return title
+
+    template_env.filters["time_range"] = _time_range
+    template_env.filters["clean_title"] = _clean_title
 
     timesheet_template = template_env.get_template("timesheet.html")
     html = timesheet_template.render(user=user, timesheet=timesheet, style=style)

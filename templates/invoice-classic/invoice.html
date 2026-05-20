@@ -16,7 +16,7 @@
       <div class="sender-detail">{{ user.subtitle }}</div>
     </div>
     <div class="header-right">
-      <div class="doc-title">Invoice</div>
+      <div class="doc-title">{% if is_reminder %}{{ reminder_title }}{% else %}Invoice{% endif %}</div>
       <table class="meta-table">
         <tr>
           <td class="meta-label">Number</td>
@@ -28,7 +28,7 @@
         </tr>
         <tr>
           <td class="meta-label">Due</td>
-          <td class="meta-value">{{ invoice.due_date }}</td>
+          <td class="meta-value">{{ invoice.effective_due_date }}</td>
         </tr>
       </table>
     </div>
@@ -64,13 +64,13 @@
   <table class="items-table">
     <thead>
       <tr>
-        <th class="col-date">Date</th>
-        <th class="col-desc">Description</th>
-        <th class="col-qty">Qty</th>
-        <th class="col-unit">Unit</th>
-        <th class="col-price">Unit Price</th>
-        <th class="col-vat">VAT</th>
-        <th class="col-subtotal">Subtotal</th>
+        <th class="col-date">{{ l.date }}</th>
+        <th class="col-desc">{{ l.description }}</th>
+        <th class="col-qty">{{ l.qty }}</th>
+        <th class="col-unit">{{ l.unit }}</th>
+        <th class="col-price">{{ l.unit_price }}</th>
+        <th class="col-vat">{{ l.vat }}</th>
+        <th class="col-subtotal">{{ l.subtotal }}</th>
       </tr>
     </thead>
     <tbody>
@@ -79,7 +79,7 @@
         <td class="col-date">{{ item.start_date }} – {{ item.end_date }}</td>
         <td class="col-desc">{{ item.description }}</td>
         <td class="col-qty num">{{ item.quantity }}</td>
-        <td class="col-unit">{{ item.unit }}</td>
+        <td class="col-unit">{{ item.unit | unit_label(item.quantity) }}</td>
         <td class="col-price num">{{ item.unit_price | as_currency }}</td>
         <td class="col-vat num">{{ item.VAT_rate | as_percentage }}</td>
         <td class="col-subtotal num">{{ item.subtotal | as_currency }}</td>
@@ -105,6 +105,12 @@
         <span class="totals-label">VAT</span>
         <span class="totals-amount">{{ invoice.VAT_total | as_currency }}</span>
       </div>
+      {% if is_reminder and invoice.reminder_fee %}
+      <div class="totals-line">
+        <span class="totals-label">Reminder Fee</span>
+        <span class="totals-amount">{{ invoice.reminder_fee | as_currency }}</span>
+      </div>
+      {% endif %}
       <div class="totals-rule"></div>
       <div class="totals-line total-due">
         <span class="totals-label">Total Due</span>
@@ -114,7 +120,7 @@
   </div>
 
   <div class="closing">
-    <p>Thank you for your business.</p>
+    <p>{% if is_reminder %}Please settle the outstanding amount by the new due date.{% else %}Thank you for your business.{% endif %}</p>
     <div class="sig-line"></div>
     {{ user.name }}
   </div>

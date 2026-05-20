@@ -115,21 +115,112 @@ class InvoicingDataSource(SQLModelDataSourceMixin):
         timesheet = invoice.timesheets[0]
         return timesheet
 
-    def generate_invoice_number(self, date: datetime.date) -> str:
-        """Generate a new valid invoice number"""
-        # invoice number scheme: YYYY-MM-DD-XX
-        prefix = date.strftime("%Y-%m-%d")
+    def get_reminder_chain(self, invoice_id: int) -> IntentResult[List[Invoice]]:
+        """Return the full reminder chain for an invoice (root + all reminders), sorted by level."""
+        try:
+            # Walk up to root using FK ids to avoid detached-session lazy loads
+            root_result = self.get_invoice_by_id(invoice_id)
+            if not root_result.was_intent_successful or not root_result.data:
+                return root_result
+            root = root_result.data
+            visited = {root.id}
+            while root.reminder_for_id and root.reminder_for_id not in visited:
+                visited.add(root.reminder_for_id)
+                parent_result = self.get_invoice_by_id(root.reminder_for_id)
+                if not parent_result.was_intent_successful or not parent_result.data:
+                    break
+                root = parent_result.data
 
-        # where XX is the number of invoices for the day
-        # if there are no invoices for the day, start at 1
-        # if there are invoices for the day, start at the last invoice number + 1
-        # count the number of invoices for the day
+            # Now find all invoices that belong to this chain via DB query
+            root_id = root.id
+            with self.create_session() as session:
+                all_invoices = session.exec(sqlmodel.select(Invoice)).all()
+            chain = [root]
+            # Collect all reminders whose chain head is this root
+            for inv in all_invoices:
+                if inv.id == root_id:
+                    continue
+                # Walk this invoice's reminder_for_id chain to see if it leads to root
+                node_id = inv.reminder_for_id
+                seen = set()
+                leads_to_root = False
+                while node_id and node_id not in seen:
+                    if node_id == root_id:
+                        leads_to_root = True
+                        break
+                    seen.add(node_id)
+                    parent = next((i for i in all_invoices if i.id == node_id), None)
+                    node_id = parent.reminder_for_id if parent else None
+                if leads_to_root:
+                    chain.append(inv)
+
+            chain.sort(key=lambda inv: inv.reminder_level)
+            return IntentResult(was_intent_successful=True, data=chain)
+        except Exception as ex:
+            return IntentResult(
+                was_intent_successful=False,
+                log_message=f"InvoicingDataSource.get_reminder_chain({invoice_id}): {ex}",
+                exception=ex,
+            )
+
+    def get_all_reminders_for_invoice(self, invoice_id: int) -> List[Invoice]:
+        """Return only the reminders (not the root) for a given root invoice id."""
         with self.create_session() as session:
-            invoices = session.exec(
-                sqlmodel.select(Invoice).where(Invoice.date == date)
-            ).all()
-            invoice_count = len(invoices)
-            if invoice_count == 0:
-                return f"{prefix}-01"
+            return list(
+                session.exec(
+                    sqlmodel.select(Invoice).where(
+                        Invoice.reminder_for_id == invoice_id
+                    )
+                ).all()
+            )
+
+    def generate_invoice_number(
+        self, date: datetime.date, scheme: str = "daily"
+    ) -> str:
+        """Generate a sequential invoice number using the given scheme.
+
+        Schemes:
+          daily  — YYYY-MM-DD-NN  (sequence resets each day)
+          yearly — YYYY-NN        (sequence resets each year)
+          plain  — NN             (never resets)
+
+        Finds the max existing sequence suffix to avoid collisions after
+        deletions.  Sequence numbers are zero-padded to at least 2 digits.
+        """
+        if scheme == "daily":
+            prefix = date.strftime("%Y-%m-%d")
+        elif scheme == "yearly":
+            prefix = date.strftime("%Y")
+        elif scheme == "plain":
+            prefix = ""
+        else:
+            prefix = date.strftime("%Y-%m-%d")
+
+        with self.create_session() as session:
+            if prefix:
+                invoices = session.exec(
+                    sqlmodel.select(Invoice).where(
+                        Invoice.number.startswith(f"{prefix}-")  # type: ignore[union-attr]
+                    )
+                ).all()
             else:
-                return f"{prefix}-{invoice_count + 1}"
+                invoices = session.exec(sqlmodel.select(Invoice)).all()
+
+            max_seq = 0
+            for inv in invoices:
+                if not inv.number:
+                    continue
+                try:
+                    seq = (
+                        int(inv.number.rsplit("-", 1)[-1])
+                        if prefix
+                        else int(inv.number)
+                    )
+                    max_seq = max(max_seq, seq)
+                except (ValueError, IndexError):
+                    continue
+
+            next_seq = max_seq + 1
+            if prefix:
+                return f"{prefix}-{next_seq:02d}"
+            return f"{next_seq:02d}"

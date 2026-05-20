@@ -1,6 +1,6 @@
 [project]
 name = "tuttle"
-version = "3.0.0a1"
+version = "3.1.0"
 description = "Painless business planning for freelancers."
 readme = "README.md"
 license = "GPL-3.0-only"
@@ -38,9 +38,9 @@ dependencies = [
     "pycountry",
     "icloudpy",
     "pyobjc-framework-EventKit; sys_platform == 'darwin'",
-    "alembic>=1.18.4",
     "llama-index-core",
     "llama-index-llms-ollama",
+    "llama-index-llms-openai-like",
 ]
 
 [project.scripts]
@@ -74,6 +74,7 @@ build-backend = "hatchling.build"
 packages = ["tuttle"]
 
 [tool.pytest.ini_options]
+testpaths = ["tuttle_tests"]
 collect_ignore = ["setup.py"]
 addopts = ""
 
@@ -90,7 +91,7 @@ known_typing = ["typing"]
 sections = ["FUTURE", "TYPING", "STDLIB", "THIRDPARTY", "FIRSTPARTY", "LOCALFOLDER"]
 
 [tool.bumpversion]
-current_version = "3.0.0a1"
+current_version = "3.1.0"
 commit = true
 tag = true
 

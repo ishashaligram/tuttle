@@ -69,6 +69,18 @@ Thin Alembic caller (backup → `command.upgrade` → restore on failure).
 NEVER add `ALTER TABLE` strings or column dicts here. If you find
 yourself wanting to, you are working against the design.
 
+## Downgrades are not supported
+
+The `downgrade()` function in every revision must raise
+`NotImplementedError`. Tuttle is a single-user desktop app: rolling back
+a schema is destructive (data in dropped columns is gone) and offers
+nothing over restoring a `.bak-<ts>` snapshot taken by
+`ensure_schema()` before the upgrade.
+
+If you're iterating on a migration during development and want to
+"undo": delete the revision file in `versions/`, run `just reset` to
+wipe `~/.tuttle`, and regenerate.
+
 ## tuttle_tests/test_migrations.py
 
 Don't bypass these tests. They catch silent data-loss bugs that the

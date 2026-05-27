@@ -22,11 +22,32 @@ from typing import Iterator
 import pytest
 from alembic import command
 from alembic.script import ScriptDirectory
-from sqlalchemy import create_engine, inspect
+from sqlalchemy import create_engine, inspect, text
 from sqlmodel import SQLModel
 
 import tuttle.model  # noqa: F401 — ensure tables register on SQLModel.metadata
 from tuttle.db_schema import _alembic_config_for
+
+
+def _seed_value(col_type: object) -> object:
+    """Return a SQLite-compatible sentinel for a NOT NULL column of any type.
+
+    The chain test only cares about row IDENTITY surviving across the
+    upgrade; the specific values are irrelevant. Match by SQL type name
+    so we satisfy the schema's NOT NULL / type constraints.
+    """
+    t = str(col_type).upper()
+    if "INT" in t or "NUMERIC" in t or "DECIMAL" in t or "FLOAT" in t or "REAL" in t:
+        return 0
+    if "BOOL" in t:
+        return 0
+    if "DATE" in t and "TIME" in t:
+        return "2026-01-01 00:00:00"
+    if "DATE" in t:
+        return "2026-01-01"
+    if "TIME" in t:
+        return "00:00:00"
+    return ""
 
 
 def _heads(db_url: str) -> tuple[str | None, str]:
@@ -92,9 +113,23 @@ def test_upgrade_chain_is_non_destructive(tmp_db: tuple[Path, str]) -> None:
             for table_name in SQLModel.metadata.tables:
                 if table_name in excluded or table_name not in live:
                     continue
-                cols = {c["name"] for c in inspect(conn).get_columns(table_name)}
-                if {"id"}.issubset(cols):
-                    conn.exec_driver_sql(f"INSERT INTO {table_name} (id) VALUES (9999)")
+                cols_info = inspect(conn).get_columns(table_name)
+                col_names = {c["name"] for c in cols_info}
+                if "id" not in col_names:
+                    continue
+                values: dict[str, object] = {"id": 9999}
+                for col in cols_info:
+                    if col["name"] == "id" or col.get("nullable", True):
+                        continue
+                    values[col["name"]] = _seed_value(col["type"])
+                placeholders = ", ".join(f":{k}" for k in values)
+                cols_str = ", ".join(values)
+                conn.execute(
+                    text(
+                        f"INSERT INTO {table_name} ({cols_str}) VALUES ({placeholders})"
+                    ),
+                    values,
+                )
         with engine.begin() as conn:
             live = set(inspect(conn).get_table_names())
             row_counts_before = {
@@ -192,6 +227,39 @@ def test_versions_are_append_only_in_git() -> None:
         f"These migration scripts have post-commit edits to op.* calls: {offenders}. "
         f"Revisions are append-only — schema changes must ADD a new revision via "
         f"`just migrate`, not edit existing ones."
+    )
+
+
+def test_downgrades_are_not_supported() -> None:
+    """Every revision's downgrade() must raise NotImplementedError.
+
+    Tuttle is single-user desktop; data restoration goes through the
+    .bak-<ts> snapshots, never through schema downgrade. The template
+    enforces this; this test guards against a hand-edited revision that
+    re-introduces a real downgrade body.
+    """
+    import ast
+
+    versions = (
+        Path(__file__).resolve().parent.parent / "tuttle" / "migrations" / "versions"
+    )
+    offenders: list[str] = []
+    for script in versions.glob("*.py"):
+        tree = ast.parse(script.read_text(), filename=str(script))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef) and node.name == "downgrade":
+                raises_notimpl = any(
+                    isinstance(stmt, ast.Raise)
+                    and isinstance(stmt.exc, ast.Call)
+                    and getattr(stmt.exc.func, "id", "") == "NotImplementedError"
+                    for stmt in node.body
+                )
+                if not raises_notimpl:
+                    offenders.append(script.name)
+                break
+    assert not offenders, (
+        f"These revisions have a real downgrade() body: {offenders}. "
+        f"Replace with `raise NotImplementedError(...)` — see script.py.mako."
     )
 
 

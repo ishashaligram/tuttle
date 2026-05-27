@@ -76,6 +76,16 @@ Open the generated `versions/NNNN_*.py` and review:
 
 Commit `model.py` **and** the new migration script in the same commit.
 
+## Downgrades are not supported
+
+Every revision's `downgrade()` raises `NotImplementedError`. Tuttle is a
+single-user desktop app — rolling back a schema is destructive (data in
+dropped columns is gone forever) and offers nothing over restoring the
+`.bak-<ts>` snapshot that `ensure_schema()` takes before every upgrade.
+
+To "undo" a migration during development: delete the revision file,
+`just reset`, regenerate.
+
 ## Verifying chain integrity
 
 `tuttle_tests/test_migrations.py` runs on every PR. It:

@@ -109,11 +109,11 @@ migrate message:
     trap 'rm -f "$tmp"' EXIT
     TUTTLE_DB_URL="sqlite:///$tmp" {{venv}}/bin/alembic upgrade head
     TUTTLE_DB_URL="sqlite:///$tmp" {{venv}}/bin/alembic revision --autogenerate -m "{{message}}"
-    @echo ""
-    @echo "✓ Revision written. REVIEW it before committing:"
-    @echo "  - any op.drop_column + op.add_column pair is a rename → use op.alter_column(new_column_name=...)"
-    @echo "  - no `from tuttle.model import ...`"
-    @echo "  - PRAGMA foreign_key_check after batch ops on FK tables"
+    echo ""
+    echo "✓ Revision written. REVIEW it before committing:"
+    echo "  - any op.drop_column + op.add_column pair is a rename → use op.alter_column(new_column_name=...)"
+    echo "  - no \`from tuttle.model import ...\`"
+    echo "  - PRAGMA foreign_key_check after batch ops on FK tables"
 
 
 # Fail if tuttle/model.py and tuttle/migrations/versions/ disagree.

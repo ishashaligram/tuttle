@@ -58,5 +58,17 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    """Downgrade schema."""
-    ${downgrades if downgrades else "pass"}
+    """Downgrades are not supported.
+
+    Tuttle is a single-user desktop app. Rolling back schema is destructive
+    (data in dropped columns is lost) and offers nothing over restoring a
+    timestamped backup from ensure_schema()'s pre-upgrade snapshot.
+
+    If you need to iterate on a migration during development:
+    1. Delete this revision file (versions/${up_revision}_*.py)
+    2. Run `just reset` to wipe ~/.tuttle
+    3. Edit model.py, run `just migrate` again
+    """
+    raise NotImplementedError(
+        "Downgrades are not supported. Restore from a .bak-<ts> snapshot instead."
+    )

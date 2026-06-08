@@ -38,6 +38,14 @@ _rfc_spec = find_spec("rfc3987_syntax")
 if _rfc_spec and _rfc_spec.submodule_search_locations:
     datas.append((_rfc_spec.submodule_search_locations[0], "rfc3987_syntax"))
 
+# drafthorse ships Factur-X / ZUGFeRD XSD schemas as package data;
+# PyInstaller can't discover them from imports alone.
+_drafthorse_spec = find_spec("drafthorse")
+if _drafthorse_spec and _drafthorse_spec.submodule_search_locations:
+    _dh_schema = Path(_drafthorse_spec.submodule_search_locations[0]) / "schema"
+    if _dh_schema.is_dir():
+        datas.append((str(_dh_schema), "drafthorse/schema"))
+
 # ---------------------------------------------------------------------------
 # Hidden imports -- lazily imported modules PyInstaller can't trace
 # ---------------------------------------------------------------------------

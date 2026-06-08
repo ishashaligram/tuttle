@@ -68,6 +68,8 @@ class UsersIntent:
             )
             df = cal.to_data()
             ds.store_data_frame(df)
+            ds.save_to_cache()
+            ds.save_source_config("demo", calendar_name="Demo calendar")
             logger.info(f"Repopulated {len(df)} demo time-tracking events")
         except Exception as ex:
             logger.warning(f"Could not repopulate demo timetracking: {ex}")
@@ -297,6 +299,8 @@ class UsersIntent:
         def _cache_demo_timetracking(df):
             ds = TimeTrackingDataFrameSource()
             ds.store_data_frame(df)
+            ds.save_to_cache()
+            ds.save_source_config("demo", calendar_name="Demo calendar")
             logger.info(f"Cached {len(df)} demo time-tracking events")
 
         install_demo_data(
